@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+/* Safe-area insets.
+   Capacitor 8.3+ injects --safe-area-inset-* custom properties precisely
+   because Android WebView < 140 returns wrong values from env(). Always read
+   through the variable with env() as fallback, never bare env(). */
+@theme {
+  --spacing-safe-t: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --spacing-safe-b: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --spacing-safe-l: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --spacing-safe-r: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+
+  /* Minimum comfortable target for a sweaty, chalky thumb. Android's own
+     guidance is 48dp; steppers get considerably more than this. */
+  --spacing-tap: 3rem;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-neutral-950);
+  color: var(--color-neutral-100);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+
+  /* Gym ergonomics: nothing should feel like a web page. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+/* Numbers in the logging loop are read at a glance and compared against the
+   set above them, so they must not shift width as digits change. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

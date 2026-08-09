@@ -1,0 +1,48 @@
+# Private training data — the only copy of 5 years of history.
+# Contains medical notes and a named third party. Never commit.
+/Examples
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local databases and their pre-migration backups.
+# Ignore the whole directory, not *.sqlite: WAL/SHM sidecars and the dated
+# backups under db/backups/ all contain the full training history, and a
+# narrower pattern silently lets one of them through.
+# Rebuildable via `npm run import` until cutover; after cutover the device is
+# the source of truth and backs up to a synced folder.
+/db/
+
+# Android build outputs. The android/ project itself IS committed —
+# it holds the native rest-timer plugin.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/app/src/main/assets/public/
+
+# Live-reload config points at a machine-specific LAN address
+capacitor.config.local.*
