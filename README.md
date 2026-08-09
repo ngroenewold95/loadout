@@ -8,14 +8,14 @@ Replaces Progression, importing ~5 years of history (6,140 sets, 339 sessions,
 ## Stack
 
 Capacitor + React + Vite + TypeScript + Tailwind, SQLite on device via
-`@capacitor-community/sqlite`. Drizzle is a **laptop tool only** — it generates
+`@capacitor-community/sqlite`. Drizzle is a **laptop tool only** - it generates
 the schema and numbered migrations; the device runs plain SQL, because
 `drizzle-orm`'s migrator imports `node:fs` and its proxy driver misaligns
 name-keyed result rows on joins.
 
 **See [docs/PROJECT.md](docs/PROJECT.md)** for the plan, the measured findings
 about the source data and the device, and next steps. Read it before touching
-the schema or the importer — the export has several non-obvious behaviours,
+the schema or the importer - the export has several non-obvious behaviours,
 each of which silently corrupts history if forgotten.
 
 ## The constraint
@@ -36,4 +36,4 @@ npm run import     # rebuild db/ from the Progression CSV (refuses after cutover
 - `Examples/` is gitignored and holds the only copy of the source export.
 - Migrations are numbered and never edited once applied.
 - The device backs up via `VACUUM INTO` to a synced folder on launch and after
-  each session — app-private storage does not survive uninstall.
+  each session - app-private storage does not survive uninstall.

@@ -5,24 +5,17 @@
  * and cannot run in a WebView. drizzle-kit generates the SQL; this applies it.
  *
  * The `__migrations` table is ours. Do not also enable drizzle's
- * `__drizzle_migrations` — two systems each believing they own the schema is
+ * `__drizzle_migrations` - two systems each believing they own the schema is
  * the quiet failure mode.
  */
+
+import type { Db } from './driver.ts'
 
 export interface MigrationFile {
   /** Numeric prefix, e.g. 0 for `0000_init.sql`. Defines apply order. */
   index: number
   tag: string
   statements: string[]
-}
-
-/** Minimal executor so this works over better-sqlite3 and the Capacitor bridge. */
-export interface Executor {
-  exec(sql: string): Promise<void>
-  all<T = Record<string, unknown>>(
-    sql: string,
-    params?: unknown[],
-  ): Promise<T[]>
 }
 
 /** drizzle-kit separates statements with this marker. */
@@ -42,9 +35,9 @@ CREATE TABLE IF NOT EXISTS __migrations (
   applied_at INTEGER NOT NULL
 ) STRICT`
 
-export async function appliedMigrations(db: Executor): Promise<Set<number>> {
+export async function appliedMigrations(db: Db): Promise<Set<number>> {
   await db.exec(CREATE_MIGRATIONS_TABLE)
-  const rows = await db.all<{ idx: number }>('SELECT idx FROM __migrations')
+  const rows = await db.query<{ idx: number }>('SELECT idx FROM __migrations')
   return new Set(rows.map((r) => r.idx))
 }
 
@@ -53,11 +46,11 @@ export async function appliedMigrations(db: Executor): Promise<Set<number>> {
  *
  * Each migration runs inside a transaction so a failure part-way leaves the
  * database on the previous version rather than half-upgraded. The caller is
- * responsible for taking a file-level backup first — see `backupBeforeMigrate`
+ * responsible for taking a file-level backup first - see `backupBeforeMigrate`
  * in the Node runner, and the plugin's native copy on device.
  */
 export async function applyMigrations(
-  db: Executor,
+  db: Db,
   files: MigrationFile[],
   log: (msg: string) => void = () => {},
 ): Promise<number> {
@@ -73,15 +66,15 @@ export async function applyMigrations(
 
   for (const file of pending) {
     log(`applying ${file.tag} (${file.statements.length} statements)`)
-    await db.exec('BEGIN')
     try {
-      for (const stmt of file.statements) await db.exec(stmt)
-      await db.exec(
-        `INSERT INTO __migrations (idx, tag, applied_at) VALUES (${file.index}, '${file.tag.replace(/'/g, "''")}', ${Date.now()})`,
-      )
-      await db.exec('COMMIT')
+      await db.transaction(async (tx) => {
+        for (const stmt of file.statements) await tx.exec(stmt)
+        await tx.exec(
+          'INSERT INTO __migrations (idx, tag, applied_at) VALUES (?, ?, ?)',
+          [file.index, file.tag, Date.now()],
+        )
+      })
     } catch (err) {
-      await db.exec('ROLLBACK')
       throw new Error(`migration ${file.tag} failed: ${(err as Error).message}`, {
         cause: err,
       })

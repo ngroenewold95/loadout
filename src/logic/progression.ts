@@ -32,13 +32,13 @@ export const COLUMNS = {
  * Exercises whose logged number is machine ASSISTANCE, not load: a higher
  * value means an EASIER set, so PR detection must invert.
  *
- * Assisted Chinup runs 115 lb (2023) down to 25 lb (2026) — that decline is
+ * Assisted Chinup runs 115 lb (2023) down to 25 lb (2026) - that decline is
  * the user getting stronger. Reps confirm it: 115 lb averages 9.1 reps while
  * 25 lb averages 6.7.
  *
  * `Chinup` and `Chest Dip` carry no "Assisted" marker but behave identically,
  * so this cannot be inferred from the name. Note the rule only applies to rows
- * that HAVE a weight — Chinup's unweighted 2025 period and Chest Dip's 53
+ * that HAVE a weight - Chinup's unweighted 2025 period and Chest Dip's 53
  * blank rows are plain bodyweight, which falls out of this automatically
  * without needing date ranges.
  */
@@ -60,7 +60,7 @@ export interface RawRow {
 export interface MappedSet {
   sessionKey: string
   exerciseName: string
-  /** Position within the exercise — the export's `Set Order`. */
+  /** Position within the exercise - the export's `Set Order`. */
   setIndex: number
   /** Position within the session, derived by sorting set timestamps. */
   orderIndex: number
@@ -105,8 +105,8 @@ export interface MappedExport {
  * Convert a local wall-clock date + seconds-after-midnight to an epoch.
  *
  * The export contains NO timezone information anywhere. Rather than let the
- * importing machine's TZ leak into stored values — which would make re-running
- * the import on another machine produce different numbers — the wall clock is
+ * importing machine's TZ leak into stored values - which would make re-running
+ * the import on another machine produce different numbers - the wall clock is
  * interpreted as UTC. `local_date` remains the field that carries real meaning;
  * this epoch is explicitly the derived, lossy one.
  */
@@ -158,7 +158,7 @@ export function mapExport(rows: RawRow[]): MappedExport {
     /**
      * `Time` is the session END, not the start. Measured: Time minus the LAST
      * set timestamp has a median of 37 s, while Time minus the FIRST is ~59 min
-     * — the session length. Treating it as the start would shift every one of
+     * - the session length. Treating it as the start would shift every one of
      * the 339 sessions forward by about 72 minutes.
      */
     const endedAtUtc = wallClockToEpoch(localDate, endSec)
@@ -169,7 +169,7 @@ export function mapExport(rows: RawRow[]): MappedExport {
 
     /**
      * Consistency check, not a duration threshold. Session Duration legitimately
-     * ranges 1,409–7,598 s and 68 sessions exceed 4,850 s, so thresholding
+     * ranges 1,409-7,598 s and 68 sessions exceed 4,850 s, so thresholding
      * produces false positives. Comparing the header time against the last set
      * isolates exactly one bad session (2025-12-02, left running 119 hours).
      */
@@ -192,7 +192,7 @@ export function mapExport(rows: RawRow[]): MappedExport {
 
     /**
      * `Set Order` is the index within an EXERCISE (max 4), not within the
-     * session — the export never records exercise order. Recover it by sorting
+     * session - the export never records exercise order. Recover it by sorting
      * on set timestamp, which also preserves the 12 sessions where exercises
      * genuinely interleave as supersets.
      */

@@ -17,8 +17,10 @@ import { basename } from 'node:path'
 import { parseCsv, toRecords } from '../src/logic/csv.ts'
 import { mapExport, COLUMNS } from '../src/logic/progression.ts'
 import { fromKg } from '../src/logic/units.ts'
-import { loadMigrations, nodeExecutor } from './migrate.ts'
+import { loadMigrations } from './migrate.ts'
 import { applyMigrations } from '../src/db/migrations.ts'
+import { openNodeDb } from '../src/db/node.ts'
+import { seedPlanTemplates } from '../src/db/seedPlan.ts'
 
 const csvPath = process.argv[2] ?? 'Examples/2026-07-22_08-05-17.csv'
 const dbPath = process.argv[3] ?? 'db/loadout.sqlite'
@@ -66,10 +68,11 @@ console.log(`exercises  ${mapped.exercises.length}`)
 
 // ------------------------------------------------------------------ migrate
 mkdirSync('db', { recursive: true })
-const db = new Database(dbPath)
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
-await applyMigrations(nodeExecutor(db), loadMigrations())
+const handle = openNodeDb(dbPath)
+await applyMigrations(handle, loadMigrations())
+// Bulk insert stays on the synchronous better-sqlite3 handle: 6,140 prepared
+// statements inside one transaction, which is a laptop-only luxury.
+const db = handle.raw
 
 // ------------------------------------------------------------------- insert
 const now = Date.now()
@@ -188,77 +191,24 @@ db.transaction(() => {
 })()
 
 /**
- * Seed templates from the most recent session of each currently-active
- * workout name. History IS the template — no hand entry, and the exercise
- * order comes from what was actually performed.
+ * Seed the templates from the CURRENT programme, not from history.
+ *
+ * These used to be reverse-engineered from the most recent Day 1 / Day 2 /
+ * Day 3 sessions. That split has been retired: the history stays valid as
+ * history, but the programme going forward is the A/B rotation in
+ * `src/logic/plan.ts`. 20 of its 21 exercises already carry years of sets, so
+ * the last-session panel is populated from the first workout.
+ *
+ * After cutover the database owns the templates and the in-app editor edits
+ * them - this only ever runs on a rebuilt, pre-cutover database.
  */
-const ACTIVE_WINDOW_DAYS = 180
-const latestDate = (
-  db.prepare('SELECT MAX(local_date) d FROM sessions').get() as { d: string }
-).d
-const cutoff = new Date(Date.parse(`${latestDate}T00:00:00Z`) - ACTIVE_WINDOW_DAYS * 86400_000)
-  .toISOString()
-  .slice(0, 10)
-
-const activeNames = db
-  .prepare(
-    `SELECT name, MAX(local_date) last_used FROM sessions
-     WHERE name IS NOT NULL AND local_date >= ?
-     GROUP BY name ORDER BY last_used DESC`,
-  )
-  .all(cutoff) as { name: string; last_used: string }[]
-
-const insertTemplate = db.prepare(
-  'INSERT INTO templates (name, order_index, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-)
-const insertTemplateExercise = db.prepare(
-  `INSERT INTO template_exercises (template_id, exercise_id, order_index, target_sets, target_reps, rest_s, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-)
-
-db.transaction(() => {
-  activeNames.forEach(({ name, last_used }, i) => {
-    const session = db
-      .prepare(
-        'SELECT id FROM sessions WHERE name = ? ORDER BY started_at_utc DESC LIMIT 1',
-      )
-      .get(name) as { id: number }
-
-    const exercises = db
-      .prepare(
-        `SELECT exercise_id, MIN(order_index) ord, COUNT(*) sets,
-                CAST(ROUND(AVG(reps)) AS INTEGER) reps,
-                MAX(e.default_rest_s) rest
-         FROM sets s JOIN exercises e ON e.id = s.exercise_id
-         WHERE s.session_id = ?
-         GROUP BY exercise_id ORDER BY ord`,
-      )
-      .all(session.id) as {
-      exercise_id: number
-      sets: number
-      reps: number | null
-      rest: number | null
-    }[]
-
-    const t = insertTemplate.run(name, i, `Seeded from ${last_used}`, now, now)
-    exercises.forEach((ex, order) => {
-      insertTemplateExercise.run(
-        Number(t.lastInsertRowid),
-        ex.exercise_id,
-        order,
-        ex.sets,
-        ex.reps,
-        ex.rest,
-        now,
-        now,
-      )
-    })
-  })
-})()
-
+const seeded = await seedPlanTemplates(handle)
 console.log(
-  `\nseeded ${activeNames.length} template(s) from sessions since ${cutoff}: ${activeNames.map((a) => a.name).join(', ')}`,
+  `\nseeded ${seeded.templates.length} template(s) from the plan: ${seeded.templates.join(', ')}`,
 )
+if (seeded.createdExercises.length > 0) {
+  console.log(`  created new exercise(s): ${seeded.createdExercises.join(', ')}`)
+}
 
 // ------------------------------------------------------------ reconciliation
 console.log('\nreconciliation')
@@ -277,7 +227,11 @@ const one = <T>(sql: string): T => db.prepare(sql).get() as T
 let allOk = true
 allOk = check('sets in db', one<{ n: number }>('SELECT COUNT(*) n FROM sets').n, records.length) && allOk
 allOk = check('sessions in db', one<{ n: number }>('SELECT COUNT(*) n FROM sessions').n, mapped.sessions.length) && allOk
-allOk = check('exercises in db', one<{ n: number }>('SELECT COUNT(*) n FROM exercises').n, mapped.exercises.length) && allOk
+// Counted as "exercises the export produced sets for", not "rows in the table":
+// seeding the current plan legitimately adds exercises with no history behind
+// them (Pallof Press). This is the stronger check anyway - it proves every
+// imported exercise actually got its sets attached.
+allOk = check('exercises from the export', one<{ n: number }>('SELECT COUNT(DISTINCT exercise_id) n FROM sets').n, mapped.exercises.length) && allOk
 
 // Total volume, recomputed from the CSV and from the database independently.
 const csvVolume = records.reduce((sum, { record }) => {

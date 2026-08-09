@@ -7,7 +7,7 @@
  * name-keyed rows the Capacitor plugin returns). Device code runs plain SQL.
  *
  * Conventions:
- *  - `id` is the first column of every table — `exportToJson()` requires it.
+ *  - `id` is the first column of every table - `exportToJson()` requires it.
  *  - Timestamps are integer epoch milliseconds (UTC).
  *  - `local_date` is a 'YYYY-MM-DD' string and is *ground truth*: the source
  *    export carries no timezone at all, so the UTC instant is the derived,
@@ -70,7 +70,7 @@ export const exercises = sqliteTable(
     name: text('name').notNull(),
     modality: text('modality'),
     primaryMuscle: text('primary_muscle'),
-    /** Default only — actual shape is derived per set. `Chinup` and
+    /** Default only - actual shape is derived per set. `Chinup` and
      *  `Chest Dip` legitimately appear both weighted and bodyweight. */
     trackingType: text('tracking_type').notNull().default('weight_reps'),
     /** 420 imported sets record machine ASSISTANCE, where a higher number
@@ -160,13 +160,22 @@ export const templateExercises = sqliteTable(
       .references(() => exercises.id),
     orderIndex: integer('order_index').notNull(),
     targetSets: integer('target_sets'),
-    targetReps: integer('target_reps'),
+    /** Rep target as a RANGE - "2 x 5-8", not "2 x 8". The programme's
+     *  progression rule is "hit the top of the range on both sets, then add
+     *  load", so a single number cannot express the goal or decide the cue.
+     *  A fixed target is the degenerate case where min == max. */
+    targetRepMin: integer('target_rep_min'),
+    targetRepMax: integer('target_rep_max'),
     restS: integer('rest_s'),
     notes: text('notes'),
     ...timestamps,
   },
   (t) => [
     index('template_exercises_template').on(t.templateId, t.orderIndex),
+    check(
+      'template_exercises_rep_range_ck',
+      sql`target_rep_min IS NULL OR target_rep_max IS NULL OR target_rep_max >= target_rep_min`,
+    ),
   ],
 )
 
@@ -210,7 +219,7 @@ export const sets = sqliteTable(
     exerciseId: integer('exercise_id')
       .notNull()
       .references(() => exercises.id),
-    /** Position within the SESSION. The export does not record this — it is
+    /** Position within the SESSION. The export does not record this - it is
      *  derived by sorting set timestamps. */
     orderIndex: integer('order_index').notNull(),
     /** Position within the exercise. This is the export's `Set Order`. */

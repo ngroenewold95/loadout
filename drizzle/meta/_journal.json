@@ -8,6 +8,20 @@
       "when": 1786227915112,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786235010362,
+      "tag": "0001_absent_spyke",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786235057098,
+      "tag": "0002_thick_wendigo",
+      "breakpoints": true
     }
   ]
 }

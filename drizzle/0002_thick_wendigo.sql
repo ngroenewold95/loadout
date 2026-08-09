@@ -1,0 +1,1 @@
+ALTER TABLE `template_exercises` DROP COLUMN `target_reps`;

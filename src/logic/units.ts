@@ -11,7 +11,7 @@
 
 export type Unit = 'kg' | 'lb'
 
-/** Exact by international definition — not an approximation. */
+/** Exact by international definition - not an approximation. */
 export const LB_TO_KG = 0.45359237
 
 /**
@@ -77,7 +77,7 @@ export function formatWeight(kg: number, unit: Unit): string {
  *
  * Both sides are snapped to the storage grid before comparing, so a value read
  * from the database and a value just computed from user input land on the same
- * point. That asymmetry is the real hazard — it is exactly the shape of PR
+ * point. That asymmetry is the real hazard - it is exactly the shape of PR
  * detection ("is today's lift equal to the stored best?"), and a naive epsilon
  * smaller than the quantisation step gets it wrong every time.
  */

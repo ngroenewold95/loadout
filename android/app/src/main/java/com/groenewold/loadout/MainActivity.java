@@ -11,7 +11,7 @@ public class MainActivity extends BridgeActivity {
      * Source of truth for "is loadout on screen right now".
      *
      * The service reads this directly rather than inferring it from the order
-     * of lifecycle pings — otherwise starting a timer from inside the app
+     * of lifecycle pings - otherwise starting a timer from inside the app
      * flashes the bubble over the very screen that is already showing it.
      */
     public static volatile boolean isForeground = false;

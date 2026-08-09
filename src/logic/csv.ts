@@ -4,7 +4,7 @@
  * Written by hand rather than pulled in, because the one thing that matters
  * here is embedded newlines inside quoted fields: 91 rows of the Progression
  * export contain them (56 in `Set Comment`, 35 in `Workout Description`).
- * Splitting on '\n' yields 6,231 rows where the truth is 6,140 — and the
+ * Splitting on '\n' yields 6,231 rows where the truth is 6,140 - and the
  * damage is silent, because the extra fragments still look like plausible rows.
  */
 
@@ -117,7 +117,7 @@ export function toRecords(
 /**
  * Parse 'HH:MM:SS' or 'HH:MM:SS.mmm' into seconds after midnight.
  *
- * Milliseconds are optional in the export — 27 `Time` values and 4
+ * Milliseconds are optional in the export - 27 `Time` values and 4
  * `Set Timestamp` values omit them. Assuming '.mmm' throws away real rows.
  */
 export function parseClock(value: string): number | null {
@@ -145,7 +145,7 @@ export function parseNumber(value: string | undefined): number | null {
  * Parse a field that must land in an INTEGER column.
  *
  * The export writes reps as "8.00", so this parses as a float and then insists
- * the value is whole — passing "8.00" straight through would be rejected by
+ * the value is whole - passing "8.00" straight through would be rejected by
  * STRICT, and passing 8.0 silently would hide a genuinely fractional value.
  */
 export function parseInteger(value: string | undefined): number | null {

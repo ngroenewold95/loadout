@@ -10,7 +10,7 @@ import {
 
 /**
  * Every distinct weight in the real Progression export (105 values, all lb).
- * Numbers only — no private data. This is the set the importer will actually
+ * Numbers only - no private data. This is the set the importer will actually
  * push through the conversion, so it is the set worth proving against.
  */
 const REAL_LB_WEIGHTS = [

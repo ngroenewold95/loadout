@@ -2,7 +2,7 @@ import { defineConfig } from 'drizzle-kit'
 
 /**
  * `dialect: 'sqlite'` with no driver emits plain numbered .sql files plus
- * meta/_journal.json — which is exactly what we want, because the device
+ * meta/_journal.json - which is exactly what we want, because the device
  * applies them itself via the Capacitor plugin's upgrade mechanism.
  *
  * Use `generate` only, never `push`: drizzle-kit does not introspect the WHERE

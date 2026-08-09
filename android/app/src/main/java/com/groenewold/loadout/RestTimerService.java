@@ -35,9 +35,9 @@ public class RestTimerService extends Service {
     public static final String ACTION_START = "loadout.timer.START";
     public static final String ACTION_STOP = "loadout.timer.STOP";
     public static final String ACTION_EXTEND = "loadout.timer.EXTEND";
-    /** The app came to the front — the in-app header owns the timer now. */
+    /** The app came to the front - the in-app header owns the timer now. */
     public static final String ACTION_APP_FOREGROUND = "loadout.timer.APP_FG";
-    /** The app went away — hand the timer back to the floating bubble. */
+    /** The app went away - hand the timer back to the floating bubble. */
     public static final String ACTION_APP_BACKGROUND = "loadout.timer.APP_BG";
 
     public static final String EXTRA_ENDS_AT = "endsAt";
@@ -95,7 +95,7 @@ public class RestTimerService extends Service {
         handler.removeCallbacks(fireVibration);
         long untilLeadIn = endsAt - LEAD_IN_MS - System.currentTimeMillis();
         if (untilLeadIn <= 0) {
-            // Already inside the final five seconds — the waveform's own
+            // Already inside the final five seconds - the waveform's own
             // leading pause absorbs the remainder.
             if (endsAt - System.currentTimeMillis() > 0) handler.post(fireVibration);
             return;
@@ -241,7 +241,7 @@ public class RestTimerService extends Service {
             gap, PULSE_MS,    // t-1
             gap, FINAL_MS,    // zero
         };
-        // Full strength throughout — this has to cut through a gym.
+        // Full strength throughout - this has to cut through a gym.
         int[] amplitudes = { 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255 };
 
         VibrationEffect effect = vibrator.hasAmplitudeControl()
