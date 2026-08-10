@@ -97,6 +97,8 @@ export interface TemplateExerciseRow {
   implementCount: number
   preferredUnit: Unit
   baseWeightKg: number | null
+  /** Free text, often null. Feed it to `muscleBadge`, which degrades safely. */
+  primaryMuscle: string | null
 }
 
 export function listTemplateExercises(
@@ -116,7 +118,8 @@ export function listTemplateExercises(
             e.default_load_mode AS "loadMode",
             e.implement_count AS "implementCount",
             e.preferred_unit AS "preferredUnit",
-            e.default_base_weight_kg AS "baseWeightKg"
+            e.default_base_weight_kg AS "baseWeightKg",
+            e.primary_muscle AS "primaryMuscle"
        FROM template_exercises te
        JOIN exercises e ON e.id = te.exercise_id
       WHERE te.template_id = ?
@@ -138,6 +141,7 @@ export interface ExerciseSummary {
   implementCount: number
   preferredUnit: Unit
   baseWeightKg: number | null
+  primaryMuscle: string | null
   lastPerformedAtUtc: number | null
   setCount: number
 }
@@ -163,6 +167,7 @@ export function searchExercises(
             e.implement_count AS "implementCount",
             e.preferred_unit AS "preferredUnit",
             e.default_base_weight_kg AS "baseWeightKg",
+            e.primary_muscle AS "primaryMuscle",
             MAX(s.performed_at_utc) AS "lastPerformedAtUtc",
             COUNT(s.id) AS "setCount"
        FROM exercises e
@@ -458,6 +463,130 @@ export function undoLastSet(db: Db, sessionId: number): Promise<number | null> {
   })
 }
 
+export interface UpdateSetInput {
+  weightKg?: number | null
+  enteredValue?: number | null
+  enteredUnit?: Unit | null
+  reps?: number | null
+  durationS?: number | null
+  distanceM?: number | null
+  setType?: SetType
+  notes?: string | null
+}
+
+const PATCHABLE = {
+  weightKg: 'weight_kg',
+  enteredValue: 'entered_value',
+  enteredUnit: 'entered_unit',
+  reps: 'reps',
+  durationS: 'duration_s',
+  distanceM: 'distance_m',
+  setType: 'set_type',
+  notes: 'notes',
+} as const
+
+/**
+ * Correct any set, not just the last one.
+ *
+ * Read, merge, write, inside one transaction. A single UPDATE with `COALESCE`
+ * would be shorter but could never *clear* a field, and clearing is a real
+ * edit: `bodyweight` gives weight as optional precisely because `Chinup` and
+ * `Chest Dip` appear both weighted and unweighted in the same history. So an
+ * absent key means "leave alone" and an explicit `null` means "clear", which is
+ * why this reads `in` rather than checking for `undefined`.
+ *
+ * The merged row is checked against the same payload rule `logSet` enforces, so
+ * an edit that would empty a set is refused by name instead of arriving as a
+ * CHECK violation.
+ */
+export async function updateSet(
+  db: Db,
+  setId: number,
+  patch: UpdateSetInput,
+): Promise<void> {
+  const keys = (Object.keys(PATCHABLE) as (keyof UpdateSetInput)[]).filter(
+    (k) => k in patch,
+  )
+  if (keys.length === 0) return
+
+  await db.transaction(async (tx) => {
+    const current = await tx.queryOne<PerformedSet>(
+      `SELECT ${SET_COLUMNS}
+         FROM sets s
+         JOIN exercises e ON e.id = s.exercise_id
+        WHERE s.id = ? AND s.deleted_at IS NULL`,
+      [setId],
+    )
+    if (!current) throw new Error(`updateSet: set ${setId} not found`)
+
+    const merged = { ...current, ...patch }
+    if (
+      merged.weightKg == null &&
+      merged.reps == null &&
+      merged.durationS == null &&
+      merged.distanceM == null
+    ) {
+      throw new Error('updateSet: a set must record weight, reps, duration or distance')
+    }
+
+    const assignments = keys.map((k) => `${PATCHABLE[k]} = ?`).join(', ')
+    await tx.exec(
+      `UPDATE sets SET ${assignments}, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+      [...keys.map((k) => patch[k] ?? null), Date.now(), setId],
+    )
+  })
+}
+
+/**
+ * Soft delete one set and close the gap it leaves in that exercise's numbering.
+ *
+ * `undoLastSet` needs no renumbering because `logSet` derives `set_index` from
+ * `MAX + 1` over live rows, so popping the tail frees the position naturally.
+ * Deleting from the MIDDLE is different: it would leave `0, 2` behind, and
+ * `PROJECT.md` records that 2,247 of the 2,248 imported groups are exactly
+ * `0..n-1`. Holes would be a new thing in the data rather than a UI detail, so
+ * the remaining sets are renumbered in the same transaction as the delete.
+ *
+ * `order_index` is deliberately left alone. It is the position within the
+ * SESSION and exists so supersets interleave truthfully; it is an ordering key,
+ * not a count, and a gap in it means nothing to any reader.
+ */
+export async function deleteSet(db: Db, setId: number): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const row = await tx.queryOne<{ sessionId: number; exerciseId: number }>(
+      `SELECT session_id AS "sessionId", exercise_id AS "exerciseId"
+         FROM sets WHERE id = ? AND deleted_at IS NULL`,
+      [setId],
+    )
+    if (!row) return false
+
+    const now = Date.now()
+    await tx.exec('UPDATE sets SET deleted_at = ?, updated_at = ? WHERE id = ?', [
+      now,
+      now,
+      setId,
+    ])
+
+    // One statement, no loop. `ROW_NUMBER()` is the same window-function family
+    // as the `DENSE_RANK()` that `DbSmoke` already proved this device's SQLite
+    // supports.
+    await tx.exec(
+      `UPDATE sets
+          SET set_index = (
+                SELECT rn FROM (
+                  SELECT id, ROW_NUMBER() OVER (ORDER BY set_index, id) - 1 AS rn
+                    FROM sets
+                   WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL
+                ) ranked WHERE ranked.id = sets.id
+              ),
+              updated_at = ?
+        WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+      [row.sessionId, row.exerciseId, now, row.sessionId, row.exerciseId],
+    )
+    return true
+  })
+}
+
 // ------------------------------------------------------------------ history
 
 export interface LastPerformance {
@@ -468,22 +597,34 @@ export interface LastPerformance {
   sets: PerformedSet[]
 }
 
+/** How many past sessions the logging screen stacks up per exercise. */
+export const RECENT_SESSIONS = 3
+
 /**
- * The previous session's sets for each of `exerciseIds` - the highest-value
- * feature in the logging screen, and the source of every prefill.
+ * Recent sessions for each of `exerciseIds`, most recent first - the
+ * highest-value feature in the logging screen, and the source of every prefill.
  *
- * One statement for the whole template. `DENSE_RANK` picks the most recent
- * session per exercise; the tiebreak on `ses.id` matters because two sessions
- * can share a `started_at_utc` and both would otherwise rank 1.
+ * Still **one statement for the whole template**, which is the rule that
+ * matters: `DENSE_RANK` ranks whole sessions per exercise, and widening the
+ * filter from `= 1` to `<= ?` costs nothing extra on the bridge. The tiebreak
+ * on `ses.id` matters because two sessions can share a `started_at_utc` and
+ * both would otherwise rank 1.
+ *
+ * More than one session because the logging screen stacks them as cards and
+ * highlights the row matching the set being performed - see
+ * `docs/PROGRESSION.md`. Callers wanting only the previous session take `[0]`.
  */
-export async function lastPerformance(
+export async function recentPerformance(
   db: Db,
   exerciseIds: number[],
-  opts: { excludeSessionId?: number } = {},
-): Promise<Map<number, LastPerformance>> {
+  opts: { excludeSessionId?: number; sessions?: number } = {},
+): Promise<Map<number, LastPerformance[]>> {
   if (exerciseIds.length === 0) return new Map()
+  const limit = Math.max(1, opts.sessions ?? RECENT_SESSIONS)
 
-  const rows = await db.query<PerformedSet & { localDate: string; startedAtUtc: number }>(
+  const rows = await db.query<
+    PerformedSet & { localDate: string; startedAtUtc: number; rnk: number }
+  >(
     `SELECT * FROM (
         SELECT ${SET_COLUMNS},
                ses.local_date AS "localDate",
@@ -500,15 +641,19 @@ export async function lastPerformance(
            AND s.deleted_at IS NULL
            AND ses.deleted_at IS NULL
       )
-      WHERE rnk = 1
-      ORDER BY "exerciseId", "setIndex", "orderIndex"`,
-    [...exerciseIds, opts.excludeSessionId ?? NO_SESSION],
+      WHERE rnk <= ?
+      ORDER BY "exerciseId", rnk, "setIndex", "orderIndex"`,
+    [...exerciseIds, opts.excludeSessionId ?? NO_SESSION, limit],
   )
 
-  const byExercise = new Map<number, LastPerformance>()
+  const byExercise = new Map<number, LastPerformance[]>()
   for (const row of rows) {
-    let entry = byExercise.get(row.exerciseId)
-    if (!entry) {
+    const list = byExercise.get(row.exerciseId) ?? []
+    if (list.length === 0) byExercise.set(row.exerciseId, list)
+    // Rows arrive grouped by rank, so the session being filled is always the
+    // last one appended.
+    let entry = list.at(-1)
+    if (!entry || entry.sessionId !== row.sessionId) {
       entry = {
         exerciseId: row.exerciseId,
         sessionId: row.sessionId,
@@ -516,7 +661,7 @@ export async function lastPerformance(
         startedAtUtc: row.startedAtUtc,
         sets: [],
       }
-      byExercise.set(row.exerciseId, entry)
+      list.push(entry)
     }
     entry.sets.push(row)
   }

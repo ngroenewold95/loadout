@@ -5,7 +5,7 @@
  * cannot prove the three things that only differ on device: that statements
  * route to the right plugin call, that a transaction really holds across
  * async bridge crossings, and that the device's SQLite has the window function
- * `lastPerformance` depends on.
+ * `recentPerformance` depends on.
  *
  * Every check cleans up after itself with a hard delete, so running it does not
  * leave `source = 'native'` rows behind - those are the rows that permanently
@@ -18,7 +18,7 @@ import { Capacitor } from '@capacitor/core'
 import { getDb } from '../db/open.ts'
 import {
   discardSession,
-  lastPerformance,
+  recentPerformance,
   listSessionSets,
   logSet,
   startSession,
@@ -110,7 +110,7 @@ async function runChecks(): Promise<Check[]> {
     return 'inner rolled back, outer kept'
   })
 
-  // Two finished sessions, so `lastPerformance` has to pick between them.
+  // Two finished sessions, so `recentPerformance` has to rank between them.
   const seeded: number[] = []
   await record('batch insert (one crossing)', async () => {
     const now = Date.now()
@@ -151,9 +151,9 @@ async function runChecks(): Promise<Check[]> {
   })
 
   // The real risk: DENSE_RANK OVER (PARTITION BY ...) needs SQLite 3.25+.
-  await record('lastPerformance (window fn)', async () => {
-    const result = await lastPerformance(db, [exerciseId])
-    const entry = result.get(exerciseId)
+  await record('recentPerformance (window fn)', async () => {
+    const result = await recentPerformance(db, [exerciseId])
+    const entry = result.get(exerciseId)?.[0]
     if (!entry) throw new Error('no previous performance found')
     if (entry.localDate !== '2026-08-06') {
       throw new Error(`picked ${entry.localDate}, expected the newer 2026-08-06`)

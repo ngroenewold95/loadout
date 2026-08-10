@@ -1,4 +1,4 @@
-# Private training data — the only copy of 5 years of history.
+# Private training data - the only copy of 5 years of history.
 # Contains medical notes and a named third party. Never commit.
 /Examples
 
@@ -35,7 +35,7 @@ dist-ssr
 # the source of truth and backs up to a synced folder.
 /db/
 
-# Android build outputs. The android/ project itself IS committed —
+# Android build outputs. The android/ project itself IS committed -
 # it holds the native rest-timer plugin.
 android/.gradle/
 android/build/

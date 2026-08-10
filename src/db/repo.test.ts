@@ -13,7 +13,9 @@ import {
   activeSession,
   discardSession,
   endSession,
-  lastPerformance,
+  deleteSet,
+  recentPerformance,
+  updateSet,
   listSessionSets,
   listTemplates,
   listTemplateExercises,
@@ -273,7 +275,20 @@ describe('logSet', () => {
   })
 })
 
-describe('lastPerformance', () => {
+/**
+ * The previous session only, which is what most of these assertions are about.
+ * Ranking is the thing under test; the stacking is covered separately below.
+ */
+const recent = async (
+  handle: NodeDb,
+  ids: number[],
+  opts: { excludeSessionId?: number } = {},
+) =>
+  new Map(
+    [...(await recentPerformance(handle, ids, opts))].map(([id, list]) => [id, list[0]]),
+  )
+
+describe('recentPerformance', () => {
   it('returns the most recent session per exercise, in one query', async () => {
     const squat = await seedExercise('Squat')
     const bench = await seedExercise('Bench Press')
@@ -285,7 +300,7 @@ describe('lastPerformance', () => {
     ])
     await seedHistory(bench, '2026-07-10', [{ weightKg: 60, reps: 8 }])
 
-    const result = await lastPerformance(db, [squat, bench])
+    const result = await recent(db, [squat, bench])
 
     expect(result.get(squat)?.localDate).toBe('2026-07-15')
     expect(result.get(squat)?.sets.map((s) => s.reps)).toEqual([5, 4])
@@ -299,7 +314,7 @@ describe('lastPerformance', () => {
     const today = await startSession(db)
     await logSet(db, { sessionId: today, exerciseId: squat, weightKg: 110, reps: 3 })
 
-    const result = await lastPerformance(db, [squat], { excludeSessionId: today })
+    const result = await recent(db, [squat], { excludeSessionId: today })
     expect(result.get(squat)?.localDate).toBe('2026-07-15')
     expect(result.get(squat)?.sets.map((s) => s.weightKg)).toEqual([105])
   })
@@ -310,14 +325,207 @@ describe('lastPerformance', () => {
     const discarded = await seedHistory(squat, '2026-07-15', [{ weightKg: 105, reps: 5 }])
     await discardSession(db, discarded)
 
-    const result = await lastPerformance(db, [squat])
+    const result = await recent(db, [squat])
     expect(result.get(squat)?.localDate).toBe('2026-07-01')
   })
 
   it('is empty for an exercise never performed, and for no exercises at all', async () => {
     const fresh = await seedExercise('Zercher Squat')
-    expect((await lastPerformance(db, [fresh])).size).toBe(0)
-    expect((await lastPerformance(db, [])).size).toBe(0)
+    expect((await recent(db, [fresh])).size).toBe(0)
+    expect((await recent(db, [])).size).toBe(0)
+  })
+
+  it('stacks several sessions, most recent first', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-06-01', [{ weightKg: 95, reps: 5 }])
+    await seedHistory(squat, '2026-07-01', [{ weightKg: 100, reps: 5 }])
+    await seedHistory(squat, '2026-07-15', [{ weightKg: 105, reps: 5 }])
+
+    const list = (await recentPerformance(db, [squat])).get(squat)
+    expect(list?.map((s) => s.localDate)).toEqual(['2026-07-15', '2026-07-01', '2026-06-01'])
+  })
+
+  it('keeps each session whole rather than merging their sets', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-07-01', [{ weightKg: 100, reps: 5 }])
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 105, reps: 5 },
+      { weightKg: 105, reps: 4 },
+    ])
+
+    const list = (await recentPerformance(db, [squat])).get(squat)
+    expect(list?.map((s) => s.sets.length)).toEqual([2, 1])
+    expect(list?.[0].sets.map((s) => s.reps)).toEqual([5, 4])
+  })
+
+  it('honours the session limit', async () => {
+    const squat = await seedExercise('Squat')
+    for (const d of ['2026-05-01', '2026-06-01', '2026-07-01', '2026-07-15']) {
+      await seedHistory(squat, d, [{ weightKg: 100, reps: 5 }])
+    }
+    const list = (await recentPerformance(db, [squat], { sessions: 2 })).get(squat)
+    expect(list?.map((s) => s.localDate)).toEqual(['2026-07-15', '2026-07-01'])
+  })
+})
+
+describe('updateSet', () => {
+  it('edits a set that is not the last one', async () => {
+    const squat = await seedExercise('Squat')
+    const session = await startSession(db)
+    const first = await logSet(db, {
+      sessionId: session,
+      exerciseId: squat,
+      weightKg: 100,
+      reps: 5,
+    })
+    await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps: 5 })
+
+    await updateSet(db, first, { weightKg: 102.5, reps: 6 })
+
+    const sets = await listSessionSets(db, session)
+    expect(sets.map((s) => [s.weightKg, s.reps])).toEqual([
+      [102.5, 6],
+      [100, 5],
+    ])
+  })
+
+  it('clears a field on an explicit null, but leaves absent keys alone', async () => {
+    const chinup = await seedExercise('Chinup')
+    const session = await startSession(db)
+    const id = await logSet(db, {
+      sessionId: session,
+      exerciseId: chinup,
+      weightKg: 10,
+      reps: 8,
+    })
+
+    // Bodyweight chinups after a weighted set: the weight goes away, reps stay.
+    await updateSet(db, id, { weightKg: null })
+
+    const [set] = await listSessionSets(db, session)
+    expect(set.weightKg).toBeNull()
+    expect(set.reps).toBe(8)
+  })
+
+  it('refuses an edit that would leave the set with no payload', async () => {
+    const squat = await seedExercise('Squat')
+    const session = await startSession(db)
+    const id = await logSet(db, {
+      sessionId: session,
+      exerciseId: squat,
+      weightKg: 100,
+      reps: 5,
+    })
+
+    await expect(updateSet(db, id, { weightKg: null, reps: null })).rejects.toThrow(
+      /must record/,
+    )
+    const [set] = await listSessionSets(db, session)
+    expect(set.weightKg).toBe(100)
+  })
+
+  it('does nothing for an empty patch, and refuses an unknown set', async () => {
+    const squat = await seedExercise('Squat')
+    const session = await startSession(db)
+    const id = await logSet(db, {
+      sessionId: session,
+      exerciseId: squat,
+      weightKg: 100,
+      reps: 5,
+    })
+    await expect(updateSet(db, id, {})).resolves.toBeUndefined()
+    await expect(updateSet(db, 999_999, { reps: 3 })).rejects.toThrow(/not found/)
+  })
+})
+
+describe('deleteSet', () => {
+  it('closes the gap in set_index rather than leaving a hole', async () => {
+    const squat = await seedExercise('Squat')
+    const session = await startSession(db)
+    const ids: number[] = []
+    for (const reps of [5, 4, 3]) {
+      ids.push(await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps }))
+    }
+
+    expect(await deleteSet(db, ids[1])).toBe(true)
+
+    const sets = await listSessionSets(db, session)
+    expect(sets.map((s) => s.reps)).toEqual([5, 3])
+    // PROJECT.md: 2,247 of 2,248 imported groups are exactly 0..n-1.
+    expect(sets.map((s) => s.setIndex)).toEqual([0, 1])
+  })
+
+  it('leaves order_index alone, so superset interleaving survives', async () => {
+    const squat = await seedExercise('Squat')
+    const press = await seedExercise('Overhead Press')
+    const session = await startSession(db)
+    const a = await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps: 5 })
+    await logSet(db, { sessionId: session, exerciseId: press, weightKg: 40, reps: 8 })
+    await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps: 4 })
+
+    await deleteSet(db, a)
+
+    const sets = await listSessionSets(db, session)
+    // The press stays between where the squats were, which is what order_index
+    // is for. A gap in it is meaningless to any reader.
+    expect(sets.map((s) => s.exerciseId)).toEqual([press, squat])
+    expect(sets.map((s) => s.orderIndex)).toEqual([1, 2])
+  })
+
+  it('renumbers only the affected exercise', async () => {
+    const squat = await seedExercise('Squat')
+    const press = await seedExercise('Overhead Press')
+    const session = await startSession(db)
+    const s1 = await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps: 5 })
+    await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps: 4 })
+    await logSet(db, { sessionId: session, exerciseId: press, weightKg: 40, reps: 8 })
+    await logSet(db, { sessionId: session, exerciseId: press, weightKg: 40, reps: 7 })
+
+    await deleteSet(db, s1)
+
+    const sets = await listSessionSets(db, session)
+    const bySet = (id: number) => sets.filter((s) => s.exerciseId === id).map((s) => s.setIndex)
+    expect(bySet(squat)).toEqual([0])
+    expect(bySet(press)).toEqual([0, 1])
+  })
+
+  it('is a soft delete, so source = native still guards re-import', async () => {
+    const squat = await seedExercise('Squat')
+    const session = await startSession(db)
+    const id = await logSet(db, {
+      sessionId: session,
+      exerciseId: squat,
+      weightKg: 100,
+      reps: 5,
+    })
+    await deleteSet(db, id)
+
+    const [row] = await db.query<{ deletedAt: number | null; source: string }>(
+      'SELECT deleted_at AS "deletedAt", source FROM sets WHERE id = ?',
+      [id],
+    )
+    expect(row.deletedAt).not.toBeNull()
+    expect(row.source).toBe('native')
+  })
+
+  it('reports a set that is already gone rather than throwing', async () => {
+    expect(await deleteSet(db, 999_999)).toBe(false)
+  })
+
+  it('lets the next logged set reuse the freed position', async () => {
+    const squat = await seedExercise('Squat')
+    const session = await startSession(db)
+    const id = await logSet(db, {
+      sessionId: session,
+      exerciseId: squat,
+      weightKg: 100,
+      reps: 5,
+    })
+    await deleteSet(db, id)
+    await logSet(db, { sessionId: session, exerciseId: squat, weightKg: 100, reps: 5 })
+
+    const sets = await listSessionSets(db, session)
+    expect(sets.map((s) => s.setIndex)).toEqual([0])
   })
 })
 
@@ -325,7 +533,7 @@ describe('prefillFor', () => {
   it('repeats the previous set of this session once one exists', async () => {
     const squat = await seedExercise('Squat')
     await seedHistory(squat, '2026-07-15', [{ weightKg: 105, reps: 5 }])
-    const previous = (await lastPerformance(db, [squat])).get(squat)
+    const previous = (await recent(db, [squat])).get(squat)
 
     const session = await startSession(db)
     expect(prefillFor([], squat, previous)).toMatchObject({

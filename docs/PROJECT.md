@@ -4,7 +4,7 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 
 ---
 
@@ -20,9 +20,11 @@ Reference app `workout.progression.lite` is installed on the device and is a
 legitimate baseline - inspect it with `adb` when a behaviour question comes up.
 Doing so has already overturned two wrong assumptions.
 
-**Writing rule: no em dashes or en dashes anywhere** - docs, code, comments, UI
-strings, commit messages. Plain ASCII hyphens only. See `CLAUDE.md`. This is why
-the templates are named `Day A - Trap Bar` rather than with a long dash.
+**Writing rule: no em dashes anywhere** - docs, code, comments, UI strings,
+commit messages. See `CLAUDE.md`. This is why the templates are named
+`Day A - Trap Bar` rather than with the long dash `Examples/Plan.md` uses.
+**En dashes are fine**, so ranges like `5–8` may be written as such (relaxed
+2026-08-09; an earlier version of this rule banned both).
 
 ---
 
@@ -31,7 +33,7 @@ the templates are named `Day A - Trap Bar` rather than with a long dash.
 Working and verified on device (Pixel 7, Android 17 / API 37):
 
 - Vite + React 19 + TS 6 + Tailwind 4 + Capacitor 8.5, app installs and runs
-- Schema + migrations 0000-0002, with STRICT and CHECK constraints **proven** to
+- Schema + migrations 0000-0004, with STRICT and CHECK constraints **proven** to
   reject bad data and partial unique indexes allowing reuse of soft-deleted names
 - `npm run import` - 6,140 sets / 339 sessions / 86 exercises, **total volume
   7,463,140 lb matching exactly** between CSV and DB (round-trips 5,866 weights
@@ -44,9 +46,27 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   5-second haptic countdown, hides while the app is in front
 - **Logging loop working on device against the real 6,140-set history** - home,
   A/B rotation, prefill, LOG SET, rest, undo, resume, progression cue
-- 72 tests passing, typecheck and lint clean
+- **Backups before device migrations, verified on device.** The runner took its
+  own `VACUUM INTO` copy, then applied 0003 and 0004 across the Capacitor
+  bridge, leaving 6,140 sets and 7,463,140 lb intact with zero foreign key
+  violations and enforcement restored. See Corrections for the two faults this
+  shook out.
+- **Palette adopted from the reference app** (`docs/PROGRESSION.md`), with
+  muscle-group badges giving an exercise one identity everywhere
+- 132 tests passing, typecheck and lint clean
 
-Not built yet: exercise picker, template editor, backups. See Next steps.
+Built but **not yet wired to any screen** - these are pure and tested, and the
+UI stages below consume them:
+
+- `platesFor` in `src/logic/plates.ts` - the inventory-aware plate solver
+- `scrubSteps` / `parseWeight` / `parseReps` in `src/logic/entry.ts`
+- `updateSet` / `deleteSet`, and `recentPerformance` widened to three sessions
+- `app_settings` and `plate_inventory` tables, both **empty**
+- `exercises.loading` and `exercises.default_increment_kg`, both **null for all
+  87 rows**, so plate chips stay dormant until they are populated
+
+Not built yet: the UI stages 3-10 below, exercise picker, template editor, the
+synced-folder export.
 
 ---
 
@@ -134,7 +154,7 @@ One interface, `Db`, in `src/db/driver.ts`. Two backends implement it:
 Four rules the layer exists to enforce:
 
 1. **No query inside a loop.** `batch()` is one bridge crossing for N
-   statements. `lastPerformance` answers a whole template in one statement -
+   statements. `recentPerformance` answers a whole template in one statement -
    measured at **14.7 ms for 8 exercises** over the real 6,140-row database.
 2. **Transactions are scoped to a handle, not the connection.** `transaction()`
    takes the connection and passes a `tx`; everything else queues behind it.
@@ -166,7 +186,7 @@ because the Node tests cannot prove the three things that only differ on device:
 - a transaction really holds across async bridge crossings - rollback and
   savepoint nesting both confirmed
 - the device's SQLite has the `DENSE_RANK() OVER (PARTITION BY ...)` that
-  `lastPerformance` depends on - **it does**
+  `recentPerformance` depends on - **it does**
 
 It hard-deletes everything it creates, because a leftover `source = 'native'`
 row would permanently block a re-import.
@@ -206,6 +226,111 @@ weighted and unweighted in the same history, so either extreme would block them.
 
 ---
 
+## Muscle badges - DONE
+
+The coloured circle from `docs/PROGRESSION.md`, now rendered in the exercise
+header and the strip. It exists because a template is 21 names that mostly begin
+with "Machine" or "Cable", and reading them under a bar is slow.
+
+- `logic/exerciseMuscles.ts` maps **exact exercise name -> group** for all 87.
+  A flat table, not a heuristic: `Machine Fly` is chest while `Machine Rear Delt
+  Fly` is shoulders, and `Machine Leg Curl` and `Nordic Curl` are legs while
+  every other `Curl` is biceps. No pattern survives those.
+- `db/seedMuscles.ts` **only fills blanks**, so a hand correction or a future
+  exercise editor survives a re-run. Safe to call on every launch.
+- **83 of 87 classified.** The 4 blanks are deliberate: cardio and general
+  mobility have no single primary group, and the neutral `?` circle is the
+  honest answer. Guessing would defeat the point of the colour.
+- Unmapped names are **reported, not thrown** - the import prints them, because
+  a `?` badge is cosmetic and should not fail a reconciling import.
+
+**Found by looking at it on the phone:** the first `biceps` colour was a purple
+chosen to sit beside `legs`, and at the 20 px strip size the two were barely
+separable. They co-occur on **both** programme days, which is exactly when the
+colour has to work. Biceps is now orange. The rule to keep: no two groups that
+appear on the same day may be close in hue. Biceps was the one colour never
+sampled from Progression, so changing it costs no measurement.
+
+Note two groups share an initial in each direction - Chest/Calves are both `C`,
+Back/Biceps both `B` - exactly as in the reference app. The colour is the
+identity and the letter is the reminder, which is why the badge is never
+monochrome and never letter-only.
+
+---
+
+## How load is made up - `loading`, bar weight, plates
+
+Schema and solver exist and are tested; **nothing renders them yet** (stage 7).
+The design is here because it is the part a cold start would otherwise
+re-derive wrongly.
+
+### `loading` is a separate axis from `modality`
+
+`MODALITIES` has one flat `machine`, which cannot tell a Hammer Strength row
+from a cable pushdown. Those are different machines to load and different
+numbers to type, and **the imported history already contains the distinction**:
+`"Machine weight 100" + 7x45/side` reconciles exactly to a logged 730 lb, while
+`8x45` -> 460 and `10x45` -> 550 only reconcile as base plus *total* plates. So
+per-side versus total is a property of the machine, not something inferable
+from the number. Hence `exercises.loading` (migration 0004):
+
+| Value | Meaning | Chips |
+|---|---|---|
+| `plates_per_side` | barbell, iso-lateral machines | per side |
+| `plates_total` | single-pin plate-loaded sleds | total |
+| `stack` | selectorised pin stack | none |
+| `fixed` | dumbbells, fixed bars, bodyweight | none |
+
+**Payoff beyond the chips:** once populated, the deferred `Set Comment` parser
+stops having to "try both and report which matched". It knows which to try, and
+a reconciliation failure becomes evidence that an exercise's `loading` is wrong
+rather than an unresolvable ambiguity.
+
+### Bar weight resolves in three steps, most specific first
+
+1. an explicit value passed at log time
+2. `exercises.default_base_weight_kg` - the per-exercise override
+3. `app_settings.default_bar_weight_kg`, **only when `modality = 'barbell'`**
+
+Step 3's gate is load-bearing. Progression keeps a single global
+`Equipment weight: 45 Lb` with no override anywhere, which is wrong the moment a
+trap bar is involved - and `Day A - Trap Bar` opens with `Trap Bar Deadlift`.
+Trap bars run 45 to 75 lb and an EZ bar is nearer 15. A plate-loaded sled whose
+base is unrecorded must show **no base** rather than silently assuming 45 lb.
+Machines resolve at step 2, which is what `default_base_weight_kg` was built
+for - see the ~30 rows in `Set Comment` carrying bases of 100 / 55 / 20 / 15 lb.
+
+**Define the chain once**, as a single SQL expression constant in `repo.ts`,
+reused by `listTemplateExercises` (so the UI draws chips from the resolved
+value) and `logSet` (so the snapshot into `sets.base_weight_kg` cannot
+disagree). Two hand-written copies would drift.
+
+### The solver is inventory-aware, and says so when it cannot
+
+Measured off Progression (`docs/PROGRESSION.md`), including the two rules that
+are easy to get wrong:
+
+- It solves against **plates actually owned**. Owned here: 2.5, 5, 10, 25, 35,
+  45 lb. **There is no 20 lb plate**, and a solver that only knew denominations
+  would happily propose one.
+- Counts are **totals, halved per side**. Confirmed by overloading Progression's
+  own calculator: an inventory of 8 caps at 4 per side.
+- An unreachable target is reported as a **remainder**, rendered as a visually
+  distinct dashed chip, never rounded away. The number in the database is the
+  one you typed either way, so a chip row that lies is worse than none.
+
+**The arithmetic is in integer display units, not kg.** Accumulating quantised
+kg drifts exactly as `units.ts` warns: a 170 lb bar came out one 2.5 lb plate
+short because the running total landed 0.0001 kg under the plate it needed. A
+plate is a display-unit object anyway - a 45 is 45 lb, not 20.4117 kg.
+
+**Open:** the 730 lb machine press in the history needs 7x45 per side, which the
+configured inventory of 8 cannot reach. It correctly reports a shortfall, but a
+commercial gym effectively has unlimited plates. Decide whether inventory is
+per-gym, or whether an unset count means unlimited.
+
+---
+
 ## Wireless debugging and device data
 
 Complements the Dev loop section below, which covers the build commands.
@@ -239,6 +364,15 @@ adb shell "run-as com.groenewold.loadout sh -c 'rm -f databases/loadoutSQLite.db
 see 0 and hunt for an upgrade statement that does not exist. Our `__migrations`
 table remains the real schema ratchet.
 
+**Current device state (2026-08-09):** the phone carries a **340-session**
+lineage, not the canonical 339 the import produces. A pre-0003 snapshot was
+pushed back deliberately so the device's own migration runner had to apply 0003
+and 0004 itself rather than receiving an already-migrated file - which is what
+made that verification real. Re-push `db/for-device.sqlite` to return to 339.
+Check which you have with the `__migrations.applied_at` timestamps: if they all
+fall within milliseconds of each other, the file was migrated on the laptop and
+pushed, so the device path was never exercised.
+
 Re-pushing is also how the device is reset after testing - logging test sets
 writes real `source = 'native'` rows.
 
@@ -260,7 +394,10 @@ src/
     csv.ts          RFC4180 parser, parseClock/parseNumber/parseInteger
     progression.ts  export -> domain model; the four findings live here
     plan.ts         the current programme, as a SEED; shouldIncreaseLoad
-    entry.ts        entry shapes per tracking type, steppers, formatting
+    entry.ts        entry shapes, steppers, scrubSteps, keypad parsing
+    plates.ts       inventory-aware plate solver; the `loading` axis
+    muscles.ts      the eight groups and their colours; muscleBadge
+    exerciseMuscles.ts  exact exercise name -> group, all 87
   db/
     schema.ts       Drizzle schema; source of truth for migrations
     migrations.ts   shared migration runner (Node + device)
@@ -271,6 +408,13 @@ src/
     open.ts         the app's single handle; migrates before first query
     repo.ts         EVERY query the app makes
     seedPlan.ts     plan.ts -> templates tables, one transaction
+    seedMuscles.ts  fills blank primary_muscle; only ever fills blanks
+    backup.ts       VACUUM INTO copy taken before device migrations
+  Tests sit beside what they cover. Two carry their own weight:
+    db/migrations.test.ts  migrates a database WITH ROWS IN IT - the only
+                           thing that catches a parent-table rebuild failing
+    logic/plates.test.ts   conformance against chip rows measured off the
+                           reference app, not against an idea of a solver
   native/
     restTimer.ts    JS face of the rest-timer plugin
   state/
@@ -279,6 +423,7 @@ src/
     Home.tsx        next-up template, start a workout
     ActiveSession.tsx  THE LOGGING LOOP
     RestBar.tsx     in-app countdown; red count-up past zero
+    MuscleBadge.tsx the coloured identity circle, header and strip
     TimerSpike.tsx  throwaway harness for the timer - behind `debug`
     DbSmoke.tsx     throwaway on-device check of the db layer - same
 scripts/
@@ -303,7 +448,7 @@ db/                 gitignored - rebuildable until cutover
 ```bash
 npm run dev          # Vite dev server
 npm run build        # tsc -b && vite build
-npm run test         # vitest (72 tests)
+npm run test         # vitest (132 tests)
 npm run lint         # oxlint
 npm run import       # rebuild db/ from the CSV; refuses after cutover
 npm run profile      # profile any CSV's structure
@@ -349,7 +494,12 @@ adb shell am kill com.groenewold.loadout              # test process death (NOT 
 adb shell screencap -p /sdcard/s.png && adb pull /sdcard/s.png
 ```
 
-Screenshots must be **pulled**, not piped - PowerShell's `>` corrupts binary.
+**PowerShell's `>` corrupts binary.** Screenshots must be pulled, not piped.
+The same bites `adb exec-out ... > file.db` when reading the database out of
+app-private storage: it silently inflates a 1,077,248-byte file to 1,362,876.
+Use the bash tool for those, and note that Git Bash mangles remote paths in
+`adb push` (`/data/local/tmp/x` becomes a Windows path), so pushes go through
+PowerShell and binary reads go through bash.
 
 ---
 
@@ -460,15 +610,31 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
   the generated `INSERT ... SELECT` **selects the newly added columns from the
   old table**, which does not have them. Migration 0001 was hand-fixed to
   `SELECT ... NULL, NULL, ...`. **Read every generated migration before
-  applying it.**
+  applying it.** Not a one-off: **0004 emitted the identical fault** and needed
+  the identical hand-fix, so treat it as this tool's normal output for a
+  rebuild rather than as a bug that might have been fixed upstream.
 - **`drizzle-kit generate` needs a TTY** when a table both gains and loses
   columns - it prompts "is this a rename?" and dies with `Interactive prompts
   require a TTY` under a piped shell. Split the change into two generates
   (add first, drop second) instead. Migrations are append-only anyway.
 - **`PRAGMA foreign_keys` is a no-op inside a transaction**, and the migration
   runner wraps each migration in one. The `PRAGMA foreign_keys=OFF` that
-  drizzle-kit puts around a table rebuild therefore does nothing. Harmless here
-  only because `template_exercises` is a child table, referenced by nothing.
+  drizzle-kit puts around a table rebuild therefore does nothing. That was
+  harmless only while `template_exercises` was the rebuilt table, since nothing
+  references it. **Migration 0004 rebuilds `exercises`, a parent**, and
+  `DROP TABLE exercises` with rows in `sets`, `template_exercises` and
+  `exercise_aliases` fails outright with `SQLITE_CONSTRAINT_FOREIGNKEY`.
+- **`PRAGMA defer_foreign_keys` does NOT rescue that.** Measured directly: the
+  pragma reads back as `1` inside the transaction and the `DROP` still fails,
+  because the implicit `DELETE` a `DROP TABLE` performs is checked immediately
+  whatever the deferral setting. A fix that relied on it looked plausible and
+  did not work.
+  → The runner now sets `PRAGMA foreign_keys = OFF` **outside** the transaction
+  and restores it in a `finally`, which is SQLite's documented table-rebuild
+  procedure. The guarantee is kept by running **`PRAGMA foreign_key_check`
+  inside each migration before it commits**, so a migration that genuinely
+  orphans a row still fails and rolls back. Both directions are covered by
+  `migrations.test.ts`.
 - **Module side effects bite.** `scripts/migrate.ts` ran a migration merely by
   being imported, holding the DB open and causing `EBUSY` on delete. CLI entry
   points are now guarded with `import.meta.url === pathToFileURL(argv[1]).href`.
@@ -479,6 +645,12 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
 
 Inspected live with its timer running. This settled the architecture question
 and **reversed an earlier recommendation.**
+
+This section is about **process architecture**. The reference app's **UI and
+run-a-workout flow** were measured separately on 2026-08-09 and live in
+`docs/PROGRESSION.md` - pager instead of a tap strip, pre-created set slots,
+positionally aligned history, a drag-scrub with a configurable increment, an
+inventory-aware plate calculator, and the exact palette.
 
 | Component | Evidence |
 |---|---|
@@ -543,50 +715,81 @@ bubble; leave again → bubble; Skip → gone. Haptics confirmed correct by feel
 
 ## Next steps
 
-Ordered by what blocks cutover. Everything in 1-4 should land before the first
-real workout is logged natively, because cutover is one-way.
+**Where the plan is up to.** An approved ten-stage plan rebuilds the logging
+screen around what `docs/PROGRESSION.md` measured. Stages 0 to 2 are **done and
+verified on device**: the pre-migration backup, the palette, and all the pure
+logic, repo and schema groundwork. **Stages 3 to 10 are the remaining work**,
+and they are UI. They are listed below in place of the old item 1, which they
+supersede.
 
-1. **Finish the logging screen.** The loop works end to end; these are the gaps,
-   roughly in the order they will be missed:
-   - **Numeric keypad** behind a tap on the number itself. The steppers cover
-     the common case (only 73 of 5,866 weights are not multiples of 5), but
-     there is currently **no way to enter an arbitrary value at all** - a new
-     machine at an odd starting weight cannot be logged.
-   - **Rest does not survive a cold start.** `restEndsAt` is React state in
-     `ActiveSession`, so returning to a killed app loses the in-app bar even
-     though the foreground service is still counting. The service already holds
-     the absolute `endsAt`; either read it back on resume or persist it. The
-     bubble is unaffected, so this is a display gap, not a lost timer.
-   - **Auto-advance** to the next exercise once `target_sets` is met. Right now
-     moving between exercises is always a manual tap on the strip.
-   - **Distance entry** - `entryShape` handles `distance_time`, the UI does not
-     yet draw a distance field.
-   - Editing or deleting a set other than the last one. Undo only pops the tail.
-   - Per-set notes, and session notes. `Set Comment` is where the machine base
-     weights live in the old data, so this is how that habit continues.
-   - Bodyweight capture into `bodyweight_log` - the table exists, nothing writes
-     to it.
-2. **Exercise picker** (`searchExercises`, already written and ordered by
-   recency) - needed to add an exercise that is not on the template mid-workout.
-   Today an off-template lift simply cannot be recorded.
-3. **Template editor.** Explicitly wanted, and the reason `plan.ts` is a
-   one-time seed rather than a runtime source. Needs add / remove / reorder,
-   rep-range and rest editing, and must write through `seedPlanTemplates`-shaped
-   soft deletes rather than hard ones.
-4. **Backups, and the cutover procedure itself.**
-   - `VACUUM INTO` to a synced folder on launch and after each session, plus a
-     manual export. App-private storage does not survive uninstall, which is
-     the actual threat.
-   - **Device migrations currently take no backup.** The old plan assumed the
-     plugin's `addUpgradeStatement` would do it natively; we run our own
-     migration system instead, so that safety net does not exist. Take a
-     `VACUUM INTO` copy before applying pending migrations in `open.ts`.
-   - Write down the cutover itself: push the final imported database, verify
-     counts on device, then stop re-importing forever. `npm run import` already
-     refuses once any `sets.source = 'native'` row exists.
-5. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
-   plus the `debug` toggle in `App.tsx`, once the logging loop owns the timer
-   and the database.
+Each stage is independently shippable. Prove each on the phone before starting
+the next - screenshot before every tap.
+
+3. **Docked entry bar.** Three regions: header, scrolling content, and a bottom
+   bar that never moves. Tapping the number opens the keypad through
+   `parseWeight` / `parseReps`; dragging a stepper scrubs through `scrubSteps`
+   (40 CSS px per step, measured). **Check `windowSoftInputMode` in
+   `AndroidManifest.xml` first** - it is the one thing here that could force a
+   native change, and `@capacitor/keyboard` is the fix if the WebView does not
+   resize. `--spacing-safe-b` already exists for the bottom padding.
+4. **Pre-created set slots.** Derive slots from `targetSets` rather than
+   appending chips: slot `i` renders `doneHere[i]` if present, else `Set i+1`.
+   Per-slot Edit / Delete wired to `updateSet` / `deleteSet`. `Undo last set`
+   disappears, becoming a special case of deleting the last slot. The
+   progression cue stays exactly as is - it is ours, and the reference app has
+   no counterpart.
+5. **Swipe pager and aligned history.** Replace the tap strip with a CSS
+   scroll-snap pager (`snap-x snap-mandatory`, no new dependency), syncing the
+   index from an `IntersectionObserver` rather than a scroll handler. Keep a
+   slim `3/11` in the header so position is never ambiguous. Render one card per
+   session from the widened `recentPerformance`, and **highlight the row whose
+   index matches the active slot** - the single highest-value detail found in
+   the investigation.
+6. **Rest timer as an app-bar pill**, replacing `RestBar.tsx`: draining fill
+   while counting down, solid red counting up past zero, tap to skip. **Fix the
+   cold-start gap here** - `restEndsAt` is React state, so a killed app loses
+   the in-app countdown while the service keeps counting. Add a `state()` method
+   to `RestTimerPlugin` returning the service's `endsAt` and read it on mount;
+   the service already holds the value, so nothing needs persisting.
+7. **Plate chips**, rendering `platesFor` above the entry fields and recomputing
+   on every keystroke and scrub tick. Gated on `loading` being plate-loaded, so
+   **populating `loading` and the `plate_inventory` / `app_settings` rows is
+   part of this stage** - all three are empty today. See "How load is made up".
+8. **The settings that matter in a gym**: `Increment (Weight)`, `Keep screen on
+   while training`, a toggle for the overlay bubble, and rest `Vibrate` /
+   `Sound`. Columns already exist in `app_settings`.
+9. **Exercise picker.** `searchExercises` is written, tested and ordered by
+   recency, so this is mostly UI: multi-select with a running count on the FAB,
+   `Recently used` as the default section, muscle badges. Today an off-template
+   lift cannot be recorded at all.
+10. **Template editor.** The insight worth copying is **reuse**: the reference
+    app mounts the same per-exercise editor in the live workout and in the
+    template, which is what stops the two drifting. Add / remove / reorder,
+    rep-range and rest editing. Must write `seedPlanTemplates`-shaped soft
+    deletes, never hard ones, and must never re-read `plan.ts` at runtime or an
+    edit is silently undone on next launch. Add `Replace` while here.
+
+Then, still blocking cutover:
+
+11. **Backups, and the cutover procedure itself.**
+    - `VACUUM INTO` to a synced folder on launch and after each session, plus a
+      manual export. App-private storage does not survive uninstall, which is
+      the actual threat.
+    - ~~Device migrations take no backup.~~ **Done and verified on device.**
+      `src/db/backup.ts` takes a `VACUUM INTO` copy before `open.ts` applies
+      anything pending, named for the migration it is protecting against. It
+      **fails closed**: if the plugin cannot report the database path, the app
+      refuses to migrate rather than migrating unprotected. Note this guards
+      against a bad migration, **not** against uninstall, since the copies sit
+      in the same app-private directory. Nothing prunes them yet; they only
+      appear when a migration is pending, so there will be few.
+    - Write down the cutover itself: push the final imported database, verify
+      counts on device, then stop re-importing forever. `npm run import` already
+      refuses once any `sets.source = 'native'` row exists.
+12. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
+    plus the `debug` toggle in `App.tsx`, once the logging loop owns the timer
+    and the database. `DbSmoke` still earns its place until stage 6, since it is
+    the only on-device proof of the window functions `recentPerformance` needs.
 
 ### Not blocking cutover
 
@@ -599,9 +802,16 @@ real workout is logged natively, because cutover is one-way.
 
 ### Phase-1 details already settled
 
-- Default unit **lb**; steppers ±5 / ±2.5 / ±1 rep
+- Default unit **lb**; steppers ±5 / ±2.5 / ±1 rep. **Open question from the
+  investigation:** the reference app gets by with a *single* configurable
+  increment because the drag-scrub makes distance cheap and the keypad makes
+  precision cheap. The measurement behind the pair still stands (5,793 of 5,866
+  weighted sets are whole pounds), but the secondary button may simply not be
+  needed once stage 3 lands. Decide with a thumb, not a table.
 - Only `load_mode` is needed at import, and only for 4 exercises - a five-minute
-  file. `modality`, `primary_muscle` stay nullable and get filled in lazily.
+  file. `modality`, `primary_muscle`, `loading` stay nullable and get filled in
+  lazily. `primary_muscle` is now 83 of 87; `modality` and `loading` are still
+  empty, and stage 7 needs `loading`.
 - Vitest for tests; `db/*` and `Examples/` gitignored
 - App id `com.groenewold.loadout` - baked in at `cap init`; changing it orphans
   the on-device database
@@ -634,11 +844,13 @@ real workout is logged natively, because cutover is one-way.
   the source export and contains medical notes and a named third party. A
   narrower pattern than `/db/` previously let `loadout.sqlite-shm` through -
   verify with `git check-ignore -v` after touching ignore rules.
-- Migrations are numbered and never edited once applied. The Node runner takes a
-  file copy first. **On device there is currently no backup at all** - an
-  earlier version of this document claimed the plugin's `addUpgradeStatement`
-  covered it, which is wrong now that we run our own migration system. See
-  Next steps 4.
+- Migrations are numbered and never edited once applied. **Both runners take a
+  copy first**: `scripts/migrate.ts` copies the file on the laptop, and
+  `src/db/backup.ts` runs `VACUUM INTO` on device before `open.ts` applies
+  anything. The device half was missing until 2026-08-09; an older version of
+  this document claimed the plugin's `addUpgradeStatement` covered it, which was
+  never true once we took over migrations. Neither survives uninstall - that is
+  the separate synced-folder export, still open.
 - The device database must never be committed or packaged as an Android asset.
   `sets.notes` carries the medical notes from `Set Comment`, and `android/` is
   tracked. It stays in gitignored `db/` and reaches the phone over `adb`.

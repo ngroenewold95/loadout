@@ -24,7 +24,7 @@ function Shell() {
       <header className="flex items-baseline justify-between px-5 pt-4 pb-2">
         <h1 className="text-2xl font-semibold tracking-tight">loadout</h1>
         <button
-          className="text-xs text-neutral-600"
+          className="text-muted text-xs"
           onClick={() => setShowSpikes((s) => !s)}
         >
           {showSpikes ? 'hide' : 'debug'}
@@ -33,7 +33,7 @@ function Shell() {
 
       <main className="flex flex-1 flex-col gap-6 pb-6">
         {isLoading ? (
-          <p className="px-5 py-8 text-neutral-500">Opening database…</p>
+          <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
         ) : session ? (
           <ActiveSession
             session={session}

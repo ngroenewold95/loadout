@@ -20,7 +20,7 @@ import {
   activeSession,
   discardSession,
   endSession,
-  lastPerformance,
+  recentPerformance,
   listSessionSets,
   listTemplateExercises,
   listTemplates,
@@ -36,8 +36,8 @@ export const keys = {
   templateExercises: (id: number) => ['templates', id, 'exercises'] as const,
   activeSession: ['session', 'active'] as const,
   sessionSets: (id: number) => ['session', id, 'sets'] as const,
-  lastPerformance: (ids: number[], exclude?: number) =>
-    ['lastPerformance', [...ids].sort((a, b) => a - b), exclude ?? null] as const,
+  recentPerformance: (ids: number[], exclude?: number) =>
+    ['recentPerformance', [...ids].sort((a, b) => a - b), exclude ?? null] as const,
 }
 
 export function useTemplates() {
@@ -77,23 +77,23 @@ export function useSessionSets(sessionId: number | null | undefined) {
   })
 }
 
-/** Last session's sets for a whole template - one query, not one per exercise. */
-export function useLastPerformance(
+/** Recent sessions for a whole template - one query, not one per exercise. */
+export function useRecentPerformance(
   exerciseIds: number[],
   excludeSessionId?: number,
 ) {
   return useQuery({
-    queryKey: keys.lastPerformance(exerciseIds, excludeSessionId),
+    queryKey: keys.recentPerformance(exerciseIds, excludeSessionId),
     enabled: exerciseIds.length > 0,
     queryFn: async () =>
-      lastPerformance(await getDb(), exerciseIds, { excludeSessionId }),
+      recentPerformance(await getDb(), exerciseIds, { excludeSessionId }),
   })
 }
 
 /** Everything a logged set can change. */
 const invalidateAfterSet = (client: QueryClient, sessionId: number) => {
   void client.invalidateQueries({ queryKey: keys.sessionSets(sessionId) })
-  void client.invalidateQueries({ queryKey: ['lastPerformance'] })
+  void client.invalidateQueries({ queryKey: ['recentPerformance'] })
 }
 
 export function useStartSession() {
@@ -142,7 +142,7 @@ export function useDiscardSession() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.activeSession })
       void client.invalidateQueries({ queryKey: keys.templates })
-      void client.invalidateQueries({ queryKey: ['lastPerformance'] })
+      void client.invalidateQueries({ queryKey: ['recentPerformance'] })
     },
   })
 }

@@ -36,20 +36,20 @@ export function RestBar({ endsAt, onExtend, onSkip }: Props) {
   return (
     <div
       className={`mx-5 mt-3 flex items-center gap-3 rounded-xl px-4 py-3 ${
-        over ? 'bg-red-950' : 'bg-neutral-900'
+        over ? 'bg-surface-1' : 'bg-surface-1'
       }`}
     >
       <span
         className={`text-2xl font-semibold tabular-nums ${
-          over ? 'text-red-400' : 'text-neutral-200'
+          over ? 'text-danger' : 'text-text'
         }`}
       >
         {over ? '+' : ''}
         {formatDuration(Math.abs(remainingS))}
       </span>
-      <span className="flex-1 text-xs text-neutral-500">rest</span>
+      <span className="flex-1 text-xs text-text-dim">rest</span>
       <button
-        className="rounded-lg bg-neutral-800 px-3 py-2 text-sm active:bg-neutral-700"
+        className="rounded-lg bg-surface-3 px-3 py-2 text-sm active:bg-muted"
         onClick={() => {
           void RestTimer.extend({ ms: 30_000 })
           onExtend(30_000)
@@ -58,7 +58,7 @@ export function RestBar({ endsAt, onExtend, onSkip }: Props) {
         +30s
       </button>
       <button
-        className="rounded-lg bg-neutral-800 px-3 py-2 text-sm active:bg-neutral-700"
+        className="rounded-lg bg-surface-3 px-3 py-2 text-sm active:bg-muted"
         onClick={() => {
           void RestTimer.cancel()
           onSkip()

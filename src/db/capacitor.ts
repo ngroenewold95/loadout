@@ -117,7 +117,19 @@ function core(conn: SQLiteDBConnection, sqlite: SQLiteConnection): DbCore {
   }
 }
 
-export async function openCapacitorDb(name = DB_NAME): Promise<Db> {
+/**
+ * The open handle, plus where the file actually lives.
+ *
+ * `url` is what `backupBeforeMigrate` needs and is deliberately taken from the
+ * plugin rather than rebuilt from the app id. It is `null` on web, where
+ * jeep-sqlite keeps the database in IndexedDB and there is no path to copy to.
+ */
+export interface OpenedDb {
+  db: Db
+  url: string | null
+}
+
+export async function openCapacitorDb(name = DB_NAME): Promise<OpenedDb> {
   const sqlite = new SQLiteConnection(CapacitorSQLite)
   if (isWeb()) await initWebStore(sqlite)
 
@@ -131,5 +143,16 @@ export async function openCapacitorDb(name = DB_NAME): Promise<Db> {
   if (!(await conn.isDBOpen()).result) await conn.open()
   await conn.execute('PRAGMA foreign_keys = ON', false)
 
-  return createDb(core(conn, sqlite))
+  // Not fatal: a missing path costs the pre-migration backup, and `open.ts`
+  // decides what to do about that. It must not stop the app from opening.
+  let url: string | null = null
+  if (!isWeb()) {
+    try {
+      url = (await conn.getUrl()).url ?? null
+    } catch {
+      url = null
+    }
+  }
+
+  return { db: createDb(core(conn, sqlite)), url }
 }

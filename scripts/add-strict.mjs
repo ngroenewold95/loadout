@@ -2,14 +2,14 @@
  * Post-process drizzle-kit output to add STRICT to every CREATE TABLE.
  * drizzle-kit has no option for this.
  *
- * Measured behaviour (SQLite 3.53.4) — STRICT is narrower than it sounds:
+ * Measured behaviour (SQLite 3.53.4) - STRICT is narrower than it sounds:
  *
  *   REJECTED  'abc' -> REAL      (without STRICT, stores the literal text)
  *   REJECTED  ''    -> REAL      the important one: the export has 274 blank
  *                                Weight fields and 49 blank Repetitions, so
  *                                passing '' instead of null is a live bug shape
  *   REJECTED  '8.5' -> INTEGER   relevant: Repetitions arrive as "8.00"
- *   ACCEPTED  '130.00' -> REAL   coerced to 130 — STRICT does NOT catch this
+ *   ACCEPTED  '130.00' -> REAL   coerced to 130, STRICT does NOT catch this
  *   ACCEPTED  '  12 ', '1e3'     whitespace and exponent forms are coerced too
  *
  * So it is a guard against blank and malformed CSV fields reaching numeric

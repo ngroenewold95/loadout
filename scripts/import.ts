@@ -21,6 +21,7 @@ import { loadMigrations } from './migrate.ts'
 import { applyMigrations } from '../src/db/migrations.ts'
 import { openNodeDb } from '../src/db/node.ts'
 import { seedPlanTemplates } from '../src/db/seedPlan.ts'
+import { seedExerciseMuscles } from '../src/db/seedMuscles.ts'
 
 const csvPath = process.argv[2] ?? 'Examples/2026-07-22_08-05-17.csv'
 const dbPath = process.argv[3] ?? 'db/loadout.sqlite'
@@ -202,12 +203,24 @@ db.transaction(() => {
  * After cutover the database owns the templates and the in-app editor edits
  * them - this only ever runs on a rebuilt, pre-cutover database.
  */
+// Muscle groups first: `seedPlanTemplates` may create exercises the plan
+// introduces, and those want a group too - so this runs again afterwards.
+await seedExerciseMuscles(handle)
+
 const seeded = await seedPlanTemplates(handle)
 console.log(
   `\nseeded ${seeded.templates.length} template(s) from the plan: ${seeded.templates.join(', ')}`,
 )
 if (seeded.createdExercises.length > 0) {
   console.log(`  created new exercise(s): ${seeded.createdExercises.join(', ')}`)
+}
+
+const muscles = await seedExerciseMuscles(handle)
+console.log(`  muscle groups on ${muscles.withGroup} exercise(s)`)
+if (muscles.unmapped.length > 0) {
+  // Not fatal: an unmapped exercise renders the neutral `?` circle. Reported
+  // so a rename surfaces here rather than as a mystery grey badge on the phone.
+  console.log(`  UNMAPPED (will show "?"): ${muscles.unmapped.join(', ')}`)
 }
 
 // ------------------------------------------------------------ reconciliation

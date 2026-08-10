@@ -13,6 +13,39 @@
   /* Minimum comfortable target for a sweaty, chalky thumb. Android's own
      guidance is 48dp; steppers get considerably more than this. */
   --spacing-tap: 3rem;
+
+  /* Palette, measured out of Progression - see docs/PROGRESSION.md for the
+     histograms these came from. Three properties are the point, and all three
+     are easy to lose by nudging a value:
+
+     1. The card is genuinely LIGHTER than the page. The previous
+        neutral-900-on-neutral-950 was nearly the same value, so nothing read as
+        an object. This is the single biggest change.
+     2. The primary is a light tint carrying dark text, not a saturated
+        mid-tone carrying white. Higher contrast and much calmer.
+     3. Colour means identity or state, never decoration. Every surface below
+        is a neutral blue-grey; the saturated tokens are all semantic.
+
+     Flat fills throughout. Progression uses no gradients, no translucency and
+     no elevation shadows anywhere, and the screens are better for it. */
+  --color-surface: #11131b; /* page */
+  --color-surface-1: #191c27; /* cards, entry bar, dialogs */
+  --color-surface-2: #1d1f28; /* nav */
+  --color-surface-3: #272a32; /* popup menus, the only "elevated" surface */
+  --color-field: #282c38; /* text inputs */
+  --color-track: #32343d; /* the drained part of a progress fill */
+  --color-muted: #424655; /* disabled, and set slots not yet reached */
+
+  --color-primary: #b4c5ff;
+  --color-on-primary: #002a77;
+  --color-primary-container: #2f447f;
+
+  --color-text: #e1e2ed;
+  --color-text-dim: #c3c6d8;
+
+  --color-rest: #0058e6; /* counting down */
+  --color-rest-over: #971e1e; /* past zero, counting up */
+  --color-danger: #b52626; /* destructive text */
 }
 
 :root {
@@ -27,8 +60,8 @@ body,
 
 body {
   margin: 0;
-  background: var(--color-neutral-950);
-  color: var(--color-neutral-100);
+  background: var(--color-surface);
+  color: var(--color-text);
   font-family:
     system-ui,
     -apple-system,

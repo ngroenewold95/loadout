@@ -56,6 +56,23 @@ export const MODALITIES = [
   'bodyweight',
   'other',
 ] as const
+/**
+ * How the resistance is loaded. Deliberately ORTHOGONAL to `modality`, which
+ * has one flat `machine` value and so cannot tell a Hammer Strength row from a
+ * cable pushdown.
+ *
+ * The imported history already contains the distinction: `PROJECT.md` records
+ * `"Machine weight 100" + 7x45/side` reconciling exactly to a logged 730 lb,
+ * while `8x45` -> 460 and `10x45` -> 550 only reconcile as base plus TOTAL
+ * plates. Per-side versus total is therefore a property of the machine, not
+ * something inferable from the number, which is why it gets a column.
+ */
+export const LOADINGS = [
+  'plates_per_side',
+  'plates_total',
+  'stack',
+  'fixed',
+] as const
 export const UNITS = ['kg', 'lb'] as const
 export const SOURCES = ['progression_csv', 'native'] as const
 export const GROUP_KINDS = ['superset', 'dropset'] as const
@@ -69,6 +86,8 @@ export const exercises = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     name: text('name').notNull(),
     modality: text('modality'),
+    /** Plate maths and the stack increment both hang off this - see LOADINGS. */
+    loading: text('loading'),
     primaryMuscle: text('primary_muscle'),
     /** Default only - actual shape is derived per set. `Chinup` and
      *  `Chest Dip` legitimately appear both weighted and bodyweight. */
@@ -77,6 +96,10 @@ export const exercises = sqliteTable(
      *  means an easier set. Without this, PR detection reads backwards. */
     defaultLoadMode: text('default_load_mode').notNull().default('total'),
     defaultBaseWeightKg: real('default_base_weight_kg'),
+    /** Overrides the global drag-handle step. A 5 lb increment is wrong for a
+     *  stack that moves in 10s or 15s, and the scrub is only as good as its
+     *  step. */
+    defaultIncrementKg: real('default_increment_kg'),
     defaultRestS: integer('default_rest_s'),
     preferredUnit: text('preferred_unit').notNull().default('lb'),
     /** Two-handed dumbbell lifts log the PAIR total; single-arm lifts log the
@@ -90,6 +113,7 @@ export const exercises = sqliteTable(
       .on(t.name)
       .where(sql`deleted_at IS NULL`),
     check('exercises_modality_ck', sql`modality IS NULL OR ${inList('modality', MODALITIES)}`),
+    check('exercises_loading_ck', sql`loading IS NULL OR ${inList('loading', LOADINGS)}`),
     check('exercises_tracking_ck', inList('tracking_type', TRACKING_TYPES)),
     check('exercises_load_mode_ck', inList('default_load_mode', LOAD_MODES)),
     check('exercises_unit_ck', inList('preferred_unit', UNITS)),
@@ -295,6 +319,69 @@ export const bodyweightLog = sqliteTable(
   ],
 )
 
+/**
+ * App settings, as a single typed row rather than a key/value blob.
+ *
+ * In the database and not `localStorage` on purpose: the backup story is
+ * `VACUUM INTO` over the SQLite file, so anything living outside it is lost on
+ * reinstall, which is the threat `PROJECT.md` actually names. A typed row also
+ * keeps STRICT and the CHECK constraints doing real work. Each new setting
+ * costs a migration; there will be few.
+ */
+export const appSettings = sqliteTable(
+  'app_settings',
+  {
+    id: integer('id').primaryKey(),
+    /** The bar, when an exercise does not override it. Barbells only - a
+     *  plate-loaded sled must state its own base rather than inherit 45 lb. */
+    defaultBarWeightKg: real('default_bar_weight_kg'),
+    /** One step of the drag handle. Progression exposes exactly this and calls
+     *  it `Increment (Weight)`; see `docs/PROGRESSION.md`. */
+    weightIncrementKg: real('weight_increment_kg'),
+    keepScreenOn: integer('keep_screen_on').notNull().default(0),
+    overlayInBackground: integer('overlay_in_background').notNull().default(1),
+    restVibrate: integer('rest_vibrate').notNull().default(1),
+    restSound: integer('rest_sound').notNull().default(0),
+    ...timestamps,
+  },
+  () => [
+    // Exactly one row, so reads never have to pick.
+    check('app_settings_singleton_ck', sql`id = 1`),
+    check('app_settings_keep_screen_ck', sql`keep_screen_on IN (0, 1)`),
+    check('app_settings_overlay_ck', sql`overlay_in_background IN (0, 1)`),
+    check('app_settings_vibrate_ck', sql`rest_vibrate IN (0, 1)`),
+    check('app_settings_sound_ck', sql`rest_sound IN (0, 1)`),
+  ],
+)
+
+/**
+ * Which plates are actually owned, and how many.
+ *
+ * `count` is the TOTAL across both sides, which is how Progression stores it and
+ * the only form a person can verify by looking at the rack. The solver halves it
+ * for a per-side answer - confirmed by overloading Progression's own calculator,
+ * where an inventory of 8 caps at 4 per side.
+ *
+ * This exists because a solver that only knew denominations would propose a 20
+ * lb plate, and there is no 20 lb plate here.
+ */
+export const plateInventory = sqliteTable(
+  'plate_inventory',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    weightKg: real('weight_kg').notNull(),
+    count: integer('count').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('plate_inventory_weight_live')
+      .on(t.weightKg)
+      .where(sql`deleted_at IS NULL`),
+    check('plate_inventory_weight_ck', sql`weight_kg > 0`),
+    check('plate_inventory_count_ck', sql`count >= 0`),
+  ],
+)
+
 export type Exercise = typeof exercises.$inferSelect
 export type Session = typeof sessions.$inferSelect
 export type SetRow = typeof sets.$inferSelect
@@ -302,5 +389,7 @@ export type Template = typeof templates.$inferSelect
 export type TemplateExercise = typeof templateExercises.$inferSelect
 export type Equipment = typeof equipment.$inferSelect
 export type LoadMode = (typeof LOAD_MODES)[number]
+export type Loading = (typeof LOADINGS)[number]
+export type Modality = (typeof MODALITIES)[number]
 export type TrackingType = (typeof TRACKING_TYPES)[number]
 export type SetType = (typeof SET_TYPES)[number]

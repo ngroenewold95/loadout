@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
-  useLastPerformance,
+  useRecentPerformance,
   useLogSet,
   useSessionSets,
   useTemplateExercises,
@@ -30,6 +30,7 @@ import {
 import { shouldIncreaseLoad } from '../logic/plan.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
+import { MuscleBadge } from './MuscleBadge.tsx'
 import { RestBar } from './RestBar.tsx'
 
 interface Props {
@@ -51,7 +52,7 @@ export function ActiveSession({ session, onFinish }: Props) {
   const { data: planned } = useTemplateExercises(session.templateId)
   const { data: sets } = useSessionSets(session.id)
   const exerciseIds = useMemo(() => (planned ?? []).map((p) => p.exerciseId), [planned])
-  const { data: previous } = useLastPerformance(exerciseIds, session.id)
+  const { data: history } = useRecentPerformance(exerciseIds, session.id)
 
   const [index, setIndex] = useState(0)
   const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
@@ -67,7 +68,9 @@ export function ActiveSession({ session, onFinish }: Props) {
     () => (sets ?? []).filter((s) => s.exerciseId === current?.exerciseId),
     [sets, current],
   )
-  const lastTime = current ? previous?.get(current.exerciseId) : undefined
+  // Several sessions back are available now; stage 5 stacks them as cards. The
+  // most recent is what prefills and what the panel shows today.
+  const lastTime = current ? history?.get(current.exerciseId)?.[0] : undefined
 
   // Draft entry. Re-seeded whenever the exercise changes or a set lands, which
   // is what makes the next set a single tap.
@@ -84,7 +87,7 @@ export function ActiveSession({ session, onFinish }: Props) {
   }, [current, sets, lastTime])
 
   if (!planned || !current || !shape) {
-    return <p className="px-5 py-8 text-neutral-500">Loading session…</p>
+    return <p className="px-5 py-8 text-text-dim">Loading session…</p>
   }
 
   const earnedIncrease =
@@ -117,7 +120,7 @@ export function ActiveSession({ session, onFinish }: Props) {
   }
 
   const stepBtn =
-    'rounded-xl bg-neutral-800 px-3 py-4 text-lg font-semibold tabular-nums active:bg-neutral-700'
+    'rounded-xl bg-surface-3 px-3 py-4 text-lg font-semibold tabular-nums active:bg-muted'
 
   return (
     <div className="flex flex-1 flex-col">
@@ -127,28 +130,31 @@ export function ActiveSession({ session, onFinish }: Props) {
         onSkip={() => setRestEndsAt(null)}
       />
 
-      <div className="flex items-baseline justify-between px-5 pt-3">
-        <h2 className="text-xl font-semibold">{current.name}</h2>
-        <span className="text-sm text-neutral-500">
+      <div className="flex items-center justify-between gap-3 px-5 pt-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <MuscleBadge primaryMuscle={current.primaryMuscle} />
+          <h2 className="truncate text-xl font-semibold">{current.name}</h2>
+        </div>
+        <span className="shrink-0 text-sm text-text-dim">
           {index + 1}/{planned.length}
         </span>
       </div>
 
-      <p className="px-5 text-sm text-neutral-500">
+      <p className="px-5 pt-1 text-sm text-text-dim">
         {formatTarget(current.targetSets, current.targetRepMin, current.targetRepMax)}
         {current.notes ? ` · ${current.notes}` : ''}
         {current.restS ? ` · rest ${formatDuration(current.restS)}` : ''}
       </p>
 
       {/* Last session, always visible. */}
-      <div className="mx-5 mt-3 rounded-xl bg-neutral-900 p-3">
-        <p className="text-xs tracking-wide text-neutral-500 uppercase">
+      <div className="mx-5 mt-3 rounded-xl bg-surface-1 p-3">
+        <p className="text-xs tracking-wide text-text-dim uppercase">
           {lastTime ? `Last time · ${lastTime.localDate}` : 'No history yet'}
         </p>
         {lastTime && (
           // Separate elements, not a joined string: HTML collapses runs of
           // whitespace, so "355 × 8   355 × 8" rendered as one unreadable line.
-          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums text-neutral-300">
+          <div className="text-text mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums">
             {lastTime.sets.map((s) => (
               <span key={s.id}>{describeSet(s, unit)}</span>
             ))}
@@ -190,7 +196,7 @@ export function ActiveSession({ session, onFinish }: Props) {
               <span className="text-4xl font-semibold tabular-nums">
                 {weightKg == null ? '-' : formatWeight(weightKg, unit)}
               </span>
-              <span className="ml-1 text-neutral-500">{unit}</span>
+              <span className="ml-1 text-text-dim">{unit}</span>
             </div>
             <button
               className={stepBtn}
@@ -221,7 +227,7 @@ export function ActiveSession({ session, onFinish }: Props) {
             </button>
             <div className="min-w-28 text-center">
               <span className="text-4xl font-semibold tabular-nums">{reps ?? '-'}</span>
-              <span className="ml-1 text-neutral-500">reps</span>
+              <span className="ml-1 text-text-dim">reps</span>
             </div>
             <button className={stepBtn} onClick={() => setReps(stepReps(reps, 1))}>
               +1
@@ -244,7 +250,7 @@ export function ActiveSession({ session, onFinish }: Props) {
         )}
 
         <button
-          className="rounded-2xl bg-emerald-700 py-6 text-xl font-semibold tracking-wide active:bg-emerald-600 disabled:opacity-40"
+          className="bg-primary text-on-primary rounded-2xl py-6 text-xl font-semibold tracking-wide active:opacity-90 disabled:opacity-40"
           disabled={!canLog || logSet.isPending}
           onClick={handleLog}
         >
@@ -253,14 +259,14 @@ export function ActiveSession({ session, onFinish }: Props) {
 
         <div className="grid grid-cols-2 gap-3">
           <button
-            className="rounded-xl bg-neutral-800 py-3 text-sm active:bg-neutral-700 disabled:opacity-40"
+            className="rounded-xl bg-surface-3 py-3 text-sm active:bg-muted disabled:opacity-40"
             disabled={(sets ?? []).length === 0 || undoLastSet.isPending}
             onClick={() => undoLastSet.mutate(session.id)}
           >
             Undo last set
           </button>
           <button
-            className="rounded-xl bg-neutral-800 py-3 text-sm active:bg-neutral-700"
+            className="rounded-xl bg-surface-3 py-3 text-sm active:bg-muted"
             onClick={onFinish}
           >
             Finish workout
@@ -278,16 +284,17 @@ export function ActiveSession({ session, onFinish }: Props) {
             <button
               key={p.exerciseId}
               onClick={() => setIndex(i)}
-              className={`shrink-0 rounded-lg px-3 py-2 text-xs ${
+              className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs ${
                 i === index
-                  ? 'bg-neutral-200 text-neutral-900'
+                  ? 'bg-primary text-on-primary'
                   : complete
-                    ? 'bg-emerald-950 text-emerald-400'
-                    : 'bg-neutral-900 text-neutral-400'
+                    ? 'bg-surface-1 text-text opacity-60'
+                    : 'bg-surface-1 text-text-dim'
               }`}
             >
+              <MuscleBadge primaryMuscle={p.primaryMuscle} size="sm" />
               {p.name}
-              {count > 0 && ` ${count}`}
+              {p.targetSets != null && ` ${count}/${p.targetSets}`}
             </button>
           )
         })}

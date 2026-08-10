@@ -19,15 +19,13 @@ export function Home() {
     <div className="flex flex-col gap-4 px-5">
       {next && (
         <button
-          className="rounded-2xl bg-emerald-700 px-5 py-6 text-left active:bg-emerald-600 disabled:opacity-40"
+          className="bg-primary text-on-primary rounded-2xl px-5 py-6 text-left active:opacity-90 disabled:opacity-40"
           disabled={startSession.isPending}
           onClick={() => start(next.id, next.name)}
         >
-          <span className="block text-xs tracking-wide text-emerald-200 uppercase">
-            Next up
-          </span>
+          <span className="block text-xs tracking-wide uppercase opacity-70">Next up</span>
           <span className="block text-xl font-semibold">{next.name}</span>
-          <span className="block text-sm text-emerald-200">
+          <span className="block text-sm opacity-70">
             {next.exerciseCount} exercises ·{' '}
             {next.lastUsedDate ? `last done ${next.lastUsedDate}` : 'not done yet'}
           </span>
@@ -40,12 +38,12 @@ export function Home() {
           .map((t) => (
             <button
               key={t.id}
-              className="rounded-xl bg-neutral-900 px-4 py-4 text-left active:bg-neutral-800 disabled:opacity-40"
+              className="bg-surface-1 active:bg-surface-3 rounded-xl px-4 py-4 text-left disabled:opacity-40"
               disabled={startSession.isPending}
               onClick={() => start(t.id, t.name)}
             >
               <span className="block font-medium">{t.name}</span>
-              <span className="block text-sm text-neutral-500">
+              <span className="text-text-dim block text-sm opacity-70">
                 {t.exerciseCount} exercises ·{' '}
                 {t.lastUsedDate ? `last done ${t.lastUsedDate}` : 'not done yet'}
               </span>
@@ -54,7 +52,7 @@ export function Home() {
       </div>
 
       {startSession.isError && (
-        <p className="rounded-xl bg-red-950 px-3 py-2 text-sm text-red-300">
+        <p className="bg-surface-1 text-danger rounded-xl px-3 py-2 text-sm">
           {(startSession.error as Error).message}
         </p>
       )}
