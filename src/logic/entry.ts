@@ -102,7 +102,11 @@ export function scrubSteps(
   if (!Number.isFinite(deltaPx) || !(pxPerStep > 0)) {
     return { steps: 0, remainderPx: 0 }
   }
-  const steps = Math.trunc(deltaPx / pxPerStep)
+  // `|| 0` normalises the -0 that Math.trunc returns for any drag shorter than
+  // one step in the negative direction. Nothing downstream cares - -0 === 0 -
+  // but a primitive that reports two different zeroes is a trap for the next
+  // caller.
+  const steps = Math.trunc(deltaPx / pxPerStep) || 0
   return { steps, remainderPx: deltaPx - steps * pxPerStep }
 }
 

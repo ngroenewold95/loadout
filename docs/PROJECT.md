@@ -53,19 +53,20 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   shook out.
 - **Palette adopted from the reference app** (`docs/PROGRESSION.md`), with
   muscle-group badges giving an exercise one identity everywhere
-- 132 tests passing, typecheck and lint clean
+- **Docked entry bar, verified on device** - three regions, and the scrub and
+  keypad both work. See below.
+- 140 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
 UI stages below consume them:
 
 - `platesFor` in `src/logic/plates.ts` - the inventory-aware plate solver
-- `scrubSteps` / `parseWeight` / `parseReps` in `src/logic/entry.ts`
 - `updateSet` / `deleteSet`, and `recentPerformance` widened to three sessions
 - `app_settings` and `plate_inventory` tables, both **empty**
 - `exercises.loading` and `exercises.default_increment_kg`, both **null for all
   87 rows**, so plate chips stay dormant until they are populated
 
-Not built yet: the UI stages 3-10 below, exercise picker, template editor, the
+Not built yet: the UI stages 4-10 below, exercise picker, template editor, the
 synced-folder export.
 
 ---
@@ -226,6 +227,75 @@ weighted and unweighted in the same history, so either extreme would block them.
 
 ---
 
+## Docked entry bar - DONE
+
+Stage 3. Verified on device against the real history, screenshot before every
+tap. `src/ui/EntryField.tsx` is the new piece; `ActiveSession.tsx` is now three
+regions and `App.tsx` is `h-full` rather than `min-h-full` so the shell is
+exactly the viewport and only the middle region scrolls.
+
+**The unknown this stage existed to settle: `windowSoftInputMode` needs no
+change, and `@capacitor/keyboard` is not needed.** The attribute is **absent**
+from `AndroidManifest.xml`, so the activity runs at Android's default
+`adjustUnspecified` - and measured on device, the WebView resizes anyway. With
+the keypad open the entry bar rode above it and LOG SET sat at the **identical
+y** as with the keypad closed. Nothing native was touched for this stage.
+
+The layout-shift mis-tap is now structurally impossible rather than merely
+unlikely. Logging a set makes the rest bar appear, which pushes the header down
+about 190 px - and LOG SET does not move, because it is in a different region.
+That is the exact failure `PROJECT.md` recorded, where a tap meant for LOG SET
+hit *Finish workout*. `Finish` is also out of the entry area entirely now, a
+small label in the header beside the `1/10` counter.
+
+### Three ways to change a number, all measured on device
+
+| Gesture | Measured |
+|---|---|
+| Tap a handle | 265 -> 260 on the `−5` handle |
+| Drag up 500 px on `+5` | 225 -> 245, i.e. 4 steps |
+| Drag up 500 px on `−5` | 245 -> 265, i.e. 4 steps, **not** −4 |
+| Tap the number | numeric keypad with `.` `,` and `−`; typing 225 replaced the selected 355 |
+
+`SCRUB_PX_PER_STEP` is 40 **CSS** px, and this screen renders at 2.625 device
+px per CSS px, so a step costs ~105 device px against Progression's measured
+~123. Close enough that it feels the same; the app is slightly more sensitive.
+
+Two rules the measurements confirm:
+
+- **Dragging up increases on either handle.** The handle's own sign only
+  decides what a *tap* does. This is Progression's behaviour, where the two
+  chevrons are one drag handle.
+- **A drag too short to earn a step is still a tap.** `scrubSteps` truncates,
+  so no step is emitted and the click handler runs normally. The 265 -> 260 tap
+  above proves the suppression works in the other direction too: a real scrub
+  emitted steps and its trailing click was swallowed rather than adding a
+  spurious one.
+
+### Decisions taken here
+
+- **The secondary ±2.5 step button is gone.** `PROJECT.md` flagged the
+  primary/secondary pair as an open question to settle "with a thumb, not a
+  table", on the grounds that the scrub makes distance cheap and the keypad
+  makes precision cheap. It could not be settled until the scrub existed. It
+  now does, so this is the version to judge; `WEIGHT_STEPS[unit][1]` is still
+  defined and restoring the row is a small edit if the thumb disagrees.
+- **The number and its unit are fixed-width columns.** Letting the number take
+  the free space left `lb` stranded against the `+5` handle. Fixed columns also
+  align the weight and the reps with each other, which is the whole point of
+  tabular numerals.
+- **The number is a `<label>`, not a bare `<input>`.** The full width between
+  the handles opens the keypad, verified by tapping the empty space beside `lb`.
+- **Focus selects the value**, so typing replaces rather than appends. Android
+  puts a Cut/Copy/Select-all bar over the content while the selection lives; it
+  disappears on the first keystroke, so it costs nothing during entry.
+- The exercise strip moved into the pinned header. Navigation you have to
+  scroll to reach is not navigation. Stage 5 replaces it with a pager anyway.
+- `Undo last set` moved next to the set chips it removes and lost the word
+  "last set". Stage 4 deletes it outright.
+
+---
+
 ## Muscle badges - DONE
 
 The coloured circle from `docs/PROGRESSION.md`, now rendered in the exercise
@@ -374,7 +444,9 @@ fall within milliseconds of each other, the file was migrated on the laptop and
 pushed, so the device path was never exercised.
 
 Re-pushing is also how the device is reset after testing - logging test sets
-writes real `source = 'native'` rows.
+writes real `source = 'native'` rows. Stage 3's verification left **an
+in-progress session with test sets in it** on the phone, so re-push before
+treating the device database as clean.
 
 **This file must never be committed.** `sets.notes` carries the medical notes
 from `Set Comment`, so it stays in gitignored `db/`. Do not package it as an
@@ -421,7 +493,9 @@ src/
     queries.ts      TanStack Query over the repo; keys and invalidation
   ui/
     Home.tsx        next-up template, start a workout
-    ActiveSession.tsx  THE LOGGING LOOP
+    ActiveSession.tsx  THE LOGGING LOOP - header, scroller, docked entry bar
+    EntryField.tsx  one number: step buttons that are also the drag handle,
+                    and the number itself as the keypad
     RestBar.tsx     in-app countdown; red count-up past zero
     MuscleBadge.tsx the coloured identity circle, header and strip
     TimerSpike.tsx  throwaway harness for the timer - behind `debug`
@@ -635,6 +709,17 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
   inside each migration before it commits**, so a migration that genuinely
   orphans a row still fails and rolls back. Both directions are covered by
   `migrations.test.ts`.
+- **"Pure and tested" was wrong about three functions.** This document listed
+  `scrubSteps`, `parseWeight` and `parseReps` under "pure and tested" while they
+  were being built ahead of the UI that would consume them. They had **no tests
+  at all** - `entry.test.ts` covered only the shapes, steppers and formatters.
+  Caught when stage 3 came to wire them up. They are tested now (132 -> 140),
+  and the first test written found `scrubSteps` returning `-0` for any drag
+  shorter than one step downward. Harmless, since `-0 === 0` is true and the
+  caller only compares against zero, but it is now normalised: a primitive that
+  reports two different zeroes is a trap for the next caller. **The lesson is
+  about the document, not the code** - "tested" is a claim like any other here
+  and has to be checked before it is written down.
 - **Module side effects bite.** `scripts/migrate.ts` ran a migration merely by
   being imported, holding the DB open and causing `EBUSY` on delete. CLI entry
   points are now guarded with `import.meta.url === pathToFileURL(argv[1]).href`.
@@ -716,22 +801,15 @@ bubble; leave again → bubble; Skip → gone. Haptics confirmed correct by feel
 ## Next steps
 
 **Where the plan is up to.** An approved ten-stage plan rebuilds the logging
-screen around what `docs/PROGRESSION.md` measured. Stages 0 to 2 are **done and
-verified on device**: the pre-migration backup, the palette, and all the pure
-logic, repo and schema groundwork. **Stages 3 to 10 are the remaining work**,
-and they are UI. They are listed below in place of the old item 1, which they
-supersede.
+screen around what `docs/PROGRESSION.md` measured. Stages 0 to 3 are **done and
+verified on device**: the pre-migration backup, the palette, all the pure logic,
+repo and schema groundwork, and the docked entry bar. **Stages 4 to 10 are the
+remaining work**, and they are UI. They are listed below in place of the old
+item 1, which they supersede.
 
 Each stage is independently shippable. Prove each on the phone before starting
 the next - screenshot before every tap.
 
-3. **Docked entry bar.** Three regions: header, scrolling content, and a bottom
-   bar that never moves. Tapping the number opens the keypad through
-   `parseWeight` / `parseReps`; dragging a stepper scrubs through `scrubSteps`
-   (40 CSS px per step, measured). **Check `windowSoftInputMode` in
-   `AndroidManifest.xml` first** - it is the one thing here that could force a
-   native change, and `@capacitor/keyboard` is the fix if the WebView does not
-   resize. `--spacing-safe-b` already exists for the bottom padding.
 4. **Pre-created set slots.** Derive slots from `targetSets` rather than
    appending chips: slot `i` renders `doneHere[i]` if present, else `Set i+1`.
    Per-slot Edit / Delete wired to `updateSet` / `deleteSet`. `Undo last set`
@@ -802,12 +880,11 @@ Then, still blocking cutover:
 
 ### Phase-1 details already settled
 
-- Default unit **lb**; steppers ±5 / ±2.5 / ±1 rep. **Open question from the
-  investigation:** the reference app gets by with a *single* configurable
-  increment because the drag-scrub makes distance cheap and the keypad makes
-  precision cheap. The measurement behind the pair still stands (5,793 of 5,866
-  weighted sets are whole pounds), but the secondary button may simply not be
-  needed once stage 3 lands. Decide with a thumb, not a table.
+- Default unit **lb**; steppers ±5 and ±1 rep. The secondary ±2.5 button was
+  **removed in stage 3** now that the scrub and the keypad exist, matching the
+  reference app's single configurable increment. The measurement behind the
+  original pair still stands (5,793 of 5,866 weighted sets are whole pounds).
+  Still to decide with a thumb: whether the ±2.5 row is missed in a gym.
 - Only `load_mode` is needed at import, and only for 4 exercises - a five-minute
   file. `modality`, `primary_muscle`, `loading` stay nullable and get filled in
   lazily. `primary_muscle` is now 83 of 87; `modality` and `loading` are still
