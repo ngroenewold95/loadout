@@ -21,8 +21,14 @@
  * exactly as they enter a fresh one, so there is no second number editor to
  * drift. It is also why `Undo` is gone - deleting the last slot is the same
  * action, and any other slot can be corrected too, which `Undo` never allowed.
+ *
+ * **Exercises are a horizontal pager, not a tap strip.** The middle region is a
+ * scroll-snap scroller holding one page per exercise, each with its own vertical
+ * scroller, so the three regions survive intact. The strip asked for an accurate
+ * tap on a small chip; a swipe asks for nothing. What remains of it is a row of
+ * muscle badges, which is a jump target and a position indicator at once.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useDeleteSet,
   useRecentPerformance,
@@ -31,7 +37,14 @@ import {
   useTemplateExercises,
   useUpdateSet,
 } from '../state/queries.ts'
-import { prefillFor, type PerformedSet, type SessionRow } from '../db/repo.ts'
+import {
+  localDateOf,
+  prefillFor,
+  type LastPerformance,
+  type PerformedSet,
+  type SessionRow,
+  type TemplateExerciseRow,
+} from '../db/repo.ts'
 import {
   entryShape,
   formatDuration,
@@ -45,16 +58,18 @@ import {
   WEIGHT_STEPS,
 } from '../logic/entry.ts'
 import { shouldIncreaseLoad } from '../logic/plan.ts'
+import { isComplete, nextIncompleteIndex } from '../logic/session.ts'
 import { setSlots, type SetSlot } from '../logic/slots.ts'
+import { useNav } from '../state/nav.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
 import { EntryField } from './EntryField.tsx'
+import { HistoryCard } from './HistoryCard.tsx'
 import { MuscleBadge } from './MuscleBadge.tsx'
 import { RestBar } from './RestBar.tsx'
 
 interface Props {
   session: SessionRow
-  onFinish: () => void
 }
 
 /** Render a set the way it was performed, whatever shape it is. */
@@ -67,13 +82,17 @@ function describeSet(set: PerformedSet, unit: Unit): string {
   return parts.join(' ')
 }
 
-export function ActiveSession({ session, onFinish }: Props) {
+export function ActiveSession({ session }: Props) {
+  const push = useNav((s) => s.push)
+  const openSummary = () => push({ kind: 'summary', sessionId: session.id })
+
   const { data: planned } = useTemplateExercises(session.templateId)
   const { data: sets } = useSessionSets(session.id)
   const exerciseIds = useMemo(() => (planned ?? []).map((p) => p.exerciseId), [planned])
   const { data: history } = useRecentPerformance(exerciseIds, session.id)
 
   const [index, setIndex] = useState(0)
+  const pagerRef = useRef<HTMLDivElement>(null)
   const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
   /** The set the entry bar is pointed at, or null when it is entering a new one. */
   const [editingSetId, setEditingSetId] = useState<number | null>(null)
@@ -90,14 +109,12 @@ export function ActiveSession({ session, onFinish }: Props) {
     () => (sets ?? []).filter((s) => s.exerciseId === current?.exerciseId),
     [sets, current],
   )
-  // Several sessions back are available now; stage 7 stacks them as cards. The
-  // most recent is what prefills and what the panel shows today.
+  // The most recent session is what prefills; the pages stack all of them.
   const lastTime = current ? history?.get(current.exerciseId)?.[0] : undefined
 
-  const slots = useMemo(
-    () => setSlots(doneHere, current?.targetSets ?? null, editingSetId),
-    [doneHere, current, editingSetId],
-  )
+  // Computed once for the whole screen rather than per card. It only changes at
+  // midnight, and a workout that crosses midnight has bigger problems.
+  const today = useMemo(() => localDateOf(), [])
 
   // Draft entry. Re-seeded whenever the exercise changes or a set lands, which
   // is what makes the next set a single tap.
@@ -111,6 +128,51 @@ export function ActiveSession({ session, onFinish }: Props) {
   useEffect(() => {
     setEditingSetId(null)
   }, [exerciseId])
+
+  /**
+   * Swiping updates the index.
+   *
+   * An `IntersectionObserver` rather than a scroll handler: it fires when a page
+   * has actually settled into view instead of on every frame of the gesture, so
+   * the header does not flicker between two exercises mid-swipe.
+   */
+  useEffect(() => {
+    const pager = pagerRef.current
+    if (!pager) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const at = Number((entry.target as HTMLElement).dataset.pageIndex)
+          if (!Number.isNaN(at)) setIndex(at)
+        }
+      },
+      // Against the pager itself, not the viewport, and past half a page so
+      // exactly one page can qualify at a time.
+      { root: pager, threshold: 0.6 },
+    )
+
+    for (const page of pager.children) observer.observe(page)
+    return () => observer.disconnect()
+  }, [planned?.length])
+
+  /**
+   * ...and the index scrolls the pager, for every other way it can change.
+   *
+   * There is no "is this scroll programmatic" flag, and deliberately not: the
+   * position is checked first, so when the observer set the index because the
+   * user swiped there, the pager is already in place and nothing is issued. The
+   * two can therefore never chase each other. Stage 8's auto-advance is the
+   * caller this exists for.
+   */
+  useEffect(() => {
+    const pager = pagerRef.current
+    if (!pager) return
+    const target = index * pager.clientWidth
+    if (Math.abs(pager.scrollLeft - target) < pager.clientWidth / 4) return
+    pager.scrollTo({ left: target, behavior: 'smooth' })
+  }, [index])
 
   useEffect(() => {
     if (!current) return
@@ -131,14 +193,6 @@ export function ActiveSession({ session, onFinish }: Props) {
   if (!planned || !current || !shape) {
     return <p className="px-5 py-8 text-text-dim">Loading session…</p>
   }
-
-  const earnedIncrease =
-    current.targetRepMax != null &&
-    shouldIncreaseLoad(
-      doneHere.map((s) => s.reps ?? 0),
-      current.targetSets ?? doneHere.length,
-      current.targetRepMax,
-    )
 
   const canLog =
     (shape.weight !== 'required' || weightKg != null) &&
@@ -172,6 +226,22 @@ export function ActiveSession({ session, onFinish }: Props) {
     })
     // Rest starts as a consequence of logging, never as its own tap.
     if (current.restS) setRestEndsAt(await startRest(current.restS))
+
+    /**
+     * Auto-advance, but only on the set that completes the exercise.
+     *
+     * The count is computed here rather than read back from the query, because
+     * the refetch this mutation triggers has not landed yet - `doneHere` is
+     * still one set behind at this point.
+     */
+    if (!isComplete(current, doneHere.length + 1)) return
+
+    // Same reason: the set just logged has to be counted by hand, or the
+    // exercise it belongs to would look one short and we would advance to it.
+    const after = [...(sets ?? []), { exerciseId: current.exerciseId }]
+    const next = nextIncompleteIndex(planned, after, index)
+    if (next == null) openSummary()
+    else setIndex(next)
   }
 
   const handleSave = async () => {
@@ -192,12 +262,6 @@ export function ActiveSession({ session, onFinish }: Props) {
     await deleteSet.mutateAsync({ setId: editingSetId, sessionId: session.id })
     setEditingSetId(null)
   }
-
-  // What an unperformed slot reads. The reference app puts the rep target here
-  // rather than a placeholder, which is better for the obvious reason: the row
-  // tells you what you are aiming for while you are aiming at it.
-  const repTarget = formatRepTarget(current.targetRepMin, current.targetRepMax)
-  const emptyLabel = repTarget ? `${repTarget} reps` : '-'
 
   // Progress as a fraction, always visible - `docs/PROGRESSION.md` lists it as
   // worth taking, and the app showed a target but never how far through it was.
@@ -231,8 +295,10 @@ export function ActiveSession({ session, onFinish }: Props) {
             <span className="tabular-nums">
               {index + 1}/{planned.length}
             </span>
-            {/* Deliberately small, and nowhere near LOG SET. */}
-            <button className="active:text-text" onClick={onFinish}>
+            {/* Deliberately small, and nowhere near LOG SET. It opens the
+                summary rather than ending the session: nothing is saved by
+                finishing, so nothing should be decided by a stray tap here. */}
+            <button className="active:text-text" onClick={openSummary}>
               Finish
             </button>
           </div>
@@ -240,75 +306,59 @@ export function ActiveSession({ session, onFinish }: Props) {
 
         <p className="text-text-dim px-5 pt-1 text-sm">{targetLine}</p>
 
-        {/* Exercise strip. Tapping moves between them; supersets just work,
-            since order_index follows what actually happened rather than this
-            list. Pinned rather than trailing the page, because navigation you
-            have to scroll to find is not navigation. Stage 7 replaces it with
-            a swipe pager. */}
-        <div className="mt-3 flex gap-2 overflow-x-auto px-5 pb-1">
+        {/* What is left of the tap strip: badges only, no names.
+
+            The strip was 11 text chips asking for an accurate tap while the
+            layout moved. The pager is now how you move between exercises, so
+            this is a position indicator first and a jump target second - but it
+            stays tappable, because swiping from exercise 1 to exercise 9 is
+            eight gestures and one tap. A complete exercise is dimmed. */}
+        <div className="mt-3 flex gap-1.5 overflow-x-auto px-5 pb-1">
           {planned.map((p, i) => {
             const count = (sets ?? []).filter((s) => s.exerciseId === p.exerciseId).length
             const complete = p.targetSets != null && count >= p.targetSets
             return (
               <button
                 key={p.exerciseId}
+                aria-label={p.name}
                 onClick={() => setIndex(i)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs ${
-                  i === index
-                    ? 'bg-primary text-on-primary'
-                    : complete
-                      ? 'bg-surface-1 text-text opacity-60'
-                      : 'bg-surface-1 text-text-dim'
+                className={`flex size-tap shrink-0 items-center justify-center rounded-full ${
+                  i === index ? 'ring-primary ring-2' : complete ? 'opacity-40' : ''
                 }`}
               >
                 <MuscleBadge primaryMuscle={p.primaryMuscle} size="sm" />
-                {p.name}
-                {p.targetSets != null && ` ${count}/${p.targetSets}`}
               </button>
             )
           })}
         </div>
       </div>
 
-      {/* Region 2: the only thing that scrolls. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-4">
-        {/* Last session, always visible. */}
-        <div className="bg-surface-1 rounded-xl p-3">
-          <p className="text-text-dim text-xs tracking-wide uppercase">
-            {lastTime ? `Last time · ${lastTime.localDate}` : 'No history yet'}
-          </p>
-          {lastTime && (
-            // Separate elements, not a joined string: HTML collapses runs of
-            // whitespace, so "355 × 8   355 × 8" rendered as one unreadable line.
-            <div className="text-text mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums">
-              {lastTime.sets.map((s) => (
-                <span key={s.id}>{describeSet(s, unit)}</span>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* Region 2: the pager. It is the only thing that scrolls, horizontally
+          between exercises and vertically inside each one.
 
-        {/* Today's sets, listed before they are performed. */}
-        <div className="mt-3 flex flex-col gap-2">
-          {slots.map((slot) => (
-            <SlotRow
-              key={slot.set?.id ?? `empty-${slot.index}`}
-              slot={slot}
-              unit={unit}
-              emptyLabel={emptyLabel}
-              disabled={busy}
-              // Tapping the slot already being corrected puts the bar back to
-              // entering, so the row is its own cancel.
-              onSelect={(id) => setEditingSetId((prev) => (prev === id ? null : id))}
-            />
-          ))}
-        </div>
-
-        {earnedIncrease && (
-          <p className="mt-3 rounded-xl bg-amber-950 px-3 py-2 text-sm text-amber-300">
-            Top of the range on every set - add load next time.
-          </p>
-        )}
+          `overscroll-x-contain` keeps a swipe past the last page from turning
+          into a browser navigation. Whether it also competes with the Android
+          edge-swipe back gesture is a device question, deliberately left to be
+          measured rather than pre-emptively worked around in native code. */}
+      <div
+        ref={pagerRef}
+        className="flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain"
+      >
+        {planned.map((p, i) => (
+          <ExercisePage
+            key={p.exerciseId}
+            pageIndex={i}
+            planned={p}
+            sets={sets ?? []}
+            history={history?.get(p.exerciseId) ?? []}
+            today={today}
+            // Only the page in view owns the entry bar, so no other page may
+            // render a slot as `editing`.
+            editingSetId={i === index ? editingSetId : null}
+            disabled={busy}
+            onSelectSet={(id) => setEditingSetId((prev) => (prev === id ? null : id))}
+          />
+        ))}
       </div>
 
       {/* Region 3: docked, and it never moves. */}
@@ -387,6 +437,115 @@ export function ActiveSession({ session, onFinish }: Props) {
             {editingSetId == null ? 'LOG SET' : 'SAVE'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One exercise's page in the pager: its history, then today's slots.
+ *
+ * Every page renders, not just the one in view. That is what makes the swipe
+ * show real content rather than a blank that fills in on arrival, and it costs
+ * nothing: the queries behind it are already fetched for the whole template in
+ * one statement each, so a page is arithmetic over arrays that are in memory.
+ */
+function ExercisePage({
+  pageIndex,
+  planned,
+  sets,
+  history,
+  today,
+  editingSetId,
+  disabled,
+  onSelectSet,
+}: {
+  pageIndex: number
+  planned: TemplateExerciseRow
+  /** Every set in the session; the page filters to its own exercise. */
+  sets: PerformedSet[]
+  history: LastPerformance[]
+  today: string
+  editingSetId: number | null
+  disabled: boolean
+  onSelectSet: (setId: number) => void
+}) {
+  const unit: Unit = planned.preferredUnit
+  const done = useMemo(
+    () => sets.filter((s) => s.exerciseId === planned.exerciseId),
+    [sets, planned.exerciseId],
+  )
+  const slots = useMemo(
+    () => setSlots(done, planned.targetSets ?? null, editingSetId),
+    [done, planned.targetSets, editingSetId],
+  )
+
+  // Which set the entry bar is aiming at, which is the row the history cards
+  // light. Null when nothing is aimed anywhere, so no stale row stays lit.
+  const activeIndex =
+    slots.find((s) => s.state === 'active' || s.state === 'editing')?.index ?? null
+
+  const earnedIncrease =
+    planned.targetRepMax != null &&
+    shouldIncreaseLoad(
+      done.map((s) => s.reps ?? 0),
+      planned.targetSets ?? done.length,
+      planned.targetRepMax,
+    )
+
+  // What an unperformed slot reads. The reference app puts the rep target here
+  // rather than a placeholder, which is better for the obvious reason: the row
+  // tells you what you are aiming for while you are aiming at it.
+  const repTarget = formatRepTarget(planned.targetRepMin, planned.targetRepMax)
+  const emptyLabel = repTarget ? `${repTarget} reps` : '-'
+
+  return (
+    <div
+      // Read back by the IntersectionObserver, which knows the element but not
+      // its position in the list.
+      data-page-index={pageIndex}
+      className="w-full shrink-0 snap-center snap-always overflow-y-auto px-5 pt-3 pb-4"
+    >
+      {/* Today's sets first: what you are about to do outranks what you did in
+          July, and it is what the thumb reaches for to correct a set. */}
+      <div className="flex flex-col gap-2">
+        {slots.map((slot) => (
+          <SlotRow
+            key={slot.set?.id ?? `empty-${slot.index}`}
+            slot={slot}
+            unit={unit}
+            emptyLabel={emptyLabel}
+            disabled={disabled}
+            // Tapping the slot already being corrected puts the bar back to
+            // entering, so the row is its own cancel.
+            onSelect={onSelectSet}
+          />
+        ))}
+      </div>
+
+      {earnedIncrease && (
+        <p className="mt-3 rounded-xl bg-amber-950 px-3 py-2 text-sm text-amber-300">
+          Top of the range on every set - add load next time.
+        </p>
+      )}
+
+      {/* Then the history stack, newest first. */}
+      <div className="mt-4 flex flex-col gap-2">
+        {history.length === 0 ? (
+          <p className="text-text-dim text-sm">No history yet</p>
+        ) : (
+          history.map((past) => (
+            <HistoryCard
+              key={past.sessionId}
+              localDate={past.localDate}
+              today={today}
+              sets={past.sets}
+              unit={unit}
+              activeIndex={activeIndex}
+              describe={describeSet}
+            />
+          ))
+        )}
       </div>
     </div>
   )

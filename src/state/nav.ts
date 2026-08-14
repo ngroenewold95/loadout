@@ -37,7 +37,10 @@ import { create } from 'zustand'
  * rather than this union being written out in advance, so an unhandled screen
  * is a type error at the point that renders it.
  */
-export type Screen = { kind: 'spikes' }
+export type Screen =
+  | { kind: 'spikes' }
+  /** What a workout added up to. **Not a save** - see `SessionSummary.tsx`. */
+  | { kind: 'summary'; sessionId: number }
 
 interface NavState {
   /** Root first. Empty means the root screen, which is not a member. */

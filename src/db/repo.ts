@@ -213,6 +213,23 @@ export function activeSession(db: Db): Promise<SessionRow | null> {
   )
 }
 
+/**
+ * One session by id, in progress or not.
+ *
+ * `activeSession` cannot serve the summary screen: the whole point of that
+ * screen is that `Finish workout` ends the session while it is still on screen,
+ * and an "active session" read would go null underneath it. It is also how a
+ * past session is opened from Home.
+ */
+export function sessionById(db: Db, sessionId: number): Promise<SessionRow | null> {
+  return db.queryOne<SessionRow>(
+    `SELECT ${SESSION_COLUMNS}
+       FROM sessions
+      WHERE id = ? AND deleted_at IS NULL`,
+    [sessionId],
+  )
+}
+
 export interface StartSessionInput {
   name?: string | null
   templateId?: number | null
@@ -298,6 +315,8 @@ export interface PerformedSet {
   sessionId: number
   exerciseId: number
   exerciseName: string
+  /** Free text, often null. Feed it to `muscleBadge`, which degrades safely. */
+  primaryMuscle: string | null
   orderIndex: number
   setIndex: number
   performedAtUtc: number | null
@@ -317,6 +336,7 @@ const SET_COLUMNS = `s.id,
        s.session_id AS "sessionId",
        s.exercise_id AS "exerciseId",
        e.name AS "exerciseName",
+       e.primary_muscle AS "primaryMuscle",
        s.order_index AS "orderIndex",
        s.set_index AS "setIndex",
        s.performed_at_utc AS "performedAtUtc",

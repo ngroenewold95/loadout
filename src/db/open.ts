@@ -41,6 +41,26 @@ export function getDb(): Promise<Db> {
 
     const applied = await applyMigrations(db, files, (m) => console.info(`[db] ${m}`))
     if (applied > 0) console.info(`[db] applied ${applied} migration(s)`)
+
+    // Browser dev only, and - inside `seedDevData` - only into an empty
+    // database. The phone's history is real and is pushed from an import;
+    // nothing here may ever reach it.
+    //
+    // The guard is written out here rather than imported from `devSeed.ts`
+    // because importing anything from that module statically would defeat the
+    // dynamic import below, which is what keeps the fabricated history and the
+    // plan it is built from in a chunk the device never loads. The bundler says
+    // so out loud: INEFFECTIVE_DYNAMIC_IMPORT.
+    if (Capacitor.getPlatform() === 'web' && import.meta.env.DEV) {
+      const { seedDevData } = await import('./devSeed.ts')
+      const seeded = await seedDevData(db)
+      if (seeded) {
+        console.info(
+          `[db] dev seed: ${seeded.sessions} fabricated sessions, ${seeded.sets} sets`,
+        )
+      }
+    }
+
     return db
   })()
   return handle

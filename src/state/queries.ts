@@ -27,6 +27,7 @@ import {
   listTemplates,
   logSet,
   nextTemplate,
+  sessionById,
   startSession,
   updateSet,
   type LogSetInput,
@@ -37,6 +38,7 @@ export const keys = {
   templates: ['templates'] as const,
   templateExercises: (id: number) => ['templates', id, 'exercises'] as const,
   activeSession: ['session', 'active'] as const,
+  session: (id: number) => ['session', id] as const,
   sessionSets: (id: number) => ['session', id, 'sets'] as const,
   recentPerformance: (ids: number[], exclude?: number) =>
     ['recentPerformance', [...ids].sort((a, b) => a - b), exclude ?? null] as const,
@@ -68,6 +70,15 @@ export function useActiveSession() {
   return useQuery({
     queryKey: keys.activeSession,
     queryFn: async () => activeSession(await getDb()),
+  })
+}
+
+/** Any session by id - the summary reads this, not the active-session query. */
+export function useSession(sessionId: number | null | undefined) {
+  return useQuery({
+    queryKey: keys.session(sessionId ?? -1),
+    enabled: sessionId != null,
+    queryFn: async () => sessionById(await getDb(), sessionId!),
   })
 }
 
@@ -147,9 +158,12 @@ export function useEndSession() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (sessionId: number) => endSession(await getDb(), sessionId),
-    onSuccess: () => {
+    onSuccess: (_r, sessionId) => {
       void client.invalidateQueries({ queryKey: keys.activeSession })
       void client.invalidateQueries({ queryKey: keys.templates })
+      // The summary is still on screen when this runs, reading the session it
+      // just ended. Without this it would keep rendering a running duration.
+      void client.invalidateQueries({ queryKey: keys.session(sessionId) })
     },
   })
 }
@@ -158,10 +172,11 @@ export function useDiscardSession() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (sessionId: number) => discardSession(await getDb(), sessionId),
-    onSuccess: () => {
+    onSuccess: (_r, sessionId) => {
       void client.invalidateQueries({ queryKey: keys.activeSession })
       void client.invalidateQueries({ queryKey: keys.templates })
       void client.invalidateQueries({ queryKey: ['recentPerformance'] })
+      void client.invalidateQueries({ queryKey: keys.session(sessionId) })
     },
   })
 }

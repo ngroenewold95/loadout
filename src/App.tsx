@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useActiveSession, useEndSession } from './state/queries.ts'
+import { useActiveSession } from './state/queries.ts'
 import { useCurrentScreen, useNav, useSystemBack, type Screen } from './state/nav.ts'
 import { ActiveSession } from './ui/ActiveSession'
 import { AppHeader } from './ui/AppHeader'
 import { Home } from './ui/Home'
+import { SessionSummary } from './ui/SessionSummary'
 import { DbSmoke } from './ui/DbSmoke'
 import { TimerSpike } from './ui/TimerSpike'
 
@@ -21,11 +22,11 @@ const client = new QueryClient({
  */
 const SCREEN_TITLES: Record<Screen['kind'], string> = {
   spikes: 'Debug',
+  summary: 'Summary',
 }
 
 function Shell() {
   const { data: session, isLoading } = useActiveSession()
-  const endSession = useEndSession()
   const screen = useCurrentScreen()
   const push = useNav((s) => s.push)
 
@@ -62,10 +63,12 @@ function Shell() {
             <TimerSpike />
             <div className="pb-6" />
           </div>
+        ) : screen?.kind === 'summary' ? (
+          <SessionSummary sessionId={screen.sessionId} />
         ) : isLoading ? (
           <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
         ) : session ? (
-          <ActiveSession session={session} onFinish={() => endSession.mutate(session.id)} />
+          <ActiveSession session={session} />
         ) : (
           <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto pt-4">
             <Home />
