@@ -28,7 +28,7 @@
  * tap on a small chip; a swipe asks for nothing. What remains of it is a row of
  * muscle badges, which is a jump target and a position indicator at once.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   useDeleteSet,
   useRecentPerformance,
@@ -61,6 +61,7 @@ import { shouldIncreaseLoad } from '../logic/plan.ts'
 import { isComplete, nextIncompleteIndex } from '../logic/session.ts'
 import { setSlots, type SetSlot } from '../logic/slots.ts'
 import { useNav } from '../state/nav.ts'
+import { useExerciseIndex, useWorkout } from '../state/workout.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
 import { EntryField } from './EntryField.tsx'
@@ -91,7 +92,15 @@ export function ActiveSession({ session }: Props) {
   const exerciseIds = useMemo(() => (planned ?? []).map((p) => p.exerciseId), [planned])
   const { data: history } = useRecentPerformance(exerciseIds, session.id)
 
-  const [index, setIndex] = useState(0)
+  // Outside the component, so pushing the summary and coming back does not
+  // reset the pager to the first exercise. Measured on device; see workout.ts.
+  const index = useExerciseIndex(session.id)
+  // Stable, so the observer effect below is not torn down and rebuilt on every
+  // render just to close over a fresh copy of it.
+  const setIndex = useCallback(
+    (at: number) => useWorkout.getState().setIndex(session.id, at),
+    [session.id],
+  )
   const pagerRef = useRef<HTMLDivElement>(null)
   const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
   /** The set the entry bar is pointed at, or null when it is entering a new one. */
@@ -130,6 +139,25 @@ export function ActiveSession({ session }: Props) {
   }, [exerciseId])
 
   /**
+   * Put the pager on the right page before anything observes it.
+   *
+   * A layout effect, and it sets `scrollLeft` directly rather than scrolling
+   * smoothly, for a reason that is a race rather than a preference: the observer
+   * below would otherwise register while page 0 was still in view, fire, and
+   * reset the index that was just restored. Positioning synchronously before
+   * paint means the observer's first callback agrees with the state instead of
+   * fighting it. It also means returning from the summary does not animate a
+   * scroll the user did not ask for.
+   */
+  const [pagerReady, setPagerReady] = useState(false)
+  useLayoutEffect(() => {
+    const pager = pagerRef.current
+    if (!pager || pagerReady) return
+    pager.scrollLeft = index * pager.clientWidth
+    setPagerReady(true)
+  }, [planned, index, pagerReady])
+
+  /**
    * Swiping updates the index.
    *
    * An `IntersectionObserver` rather than a scroll handler: it fires when a page
@@ -138,7 +166,7 @@ export function ActiveSession({ session }: Props) {
    */
   useEffect(() => {
     const pager = pagerRef.current
-    if (!pager) return
+    if (!pager || !pagerReady) return
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -155,7 +183,7 @@ export function ActiveSession({ session }: Props) {
 
     for (const page of pager.children) observer.observe(page)
     return () => observer.disconnect()
-  }, [planned?.length])
+  }, [planned?.length, pagerReady, setIndex])
 
   /**
    * ...and the index scrolls the pager, for every other way it can change.
@@ -168,11 +196,11 @@ export function ActiveSession({ session }: Props) {
    */
   useEffect(() => {
     const pager = pagerRef.current
-    if (!pager) return
+    if (!pager || !pagerReady) return
     const target = index * pager.clientWidth
     if (Math.abs(pager.scrollLeft - target) < pager.clientWidth / 4) return
     pager.scrollTo({ left: target, behavior: 'smooth' })
-  }, [index])
+  }, [index, pagerReady])
 
   useEffect(() => {
     if (!current) return
