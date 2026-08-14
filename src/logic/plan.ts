@@ -21,12 +21,24 @@
  *
  * Do not "tidy" these into one exercise each. PROJECT.md records why the
  * short-lived name inside a long-lived one's span is a distinct exercise.
+ *
+ * **Reconciled 2026-08-13 against the app itself**, read out of
+ * `Examples/progression.*.pgnbkp` by `npm run analyze:backup`. This file had
+ * been encoded from the written `Examples/Plan.md` and never checked against
+ * what Progression was actually running, and the two had diverged: nine rep
+ * ranges, the Day B ordering, and every rest value. The app wins, because the
+ * app is what the last four sessions were logged against.
  */
 
 /**
- * Rest bands, straight from the programme header:
+ * Rest bands from the written programme header:
  * 3-5 min heavy compounds · 2-3 min machines · 60-90s isolation/core.
- * Stored as the midpoint, then adjustable per exercise in the editor.
+ *
+ * **These are no longer what the plan seeds.** Day B in the app carries
+ * explicit per-movement rests of 240 / 180 / 120 / 90 s, which three buckets
+ * cannot express, so `PlannedExercise` now holds seconds directly. This is kept
+ * because `seedPlan` still needs a default for an exercise it has to create,
+ * and because Day A's inferred values below are drawn from it.
  */
 export const REST_S = {
   compound: 240,
@@ -34,20 +46,26 @@ export const REST_S = {
   isolation: 75,
 } as const
 
-export type RestBand = keyof typeof REST_S
-
 export interface PlannedExercise {
   /** Exact `exercises.name`. Created on seed if it does not exist yet. */
   exercise: string
   sets: number
   repMin: number
   repMax: number
-  rest: RestBand
+  /**
+   * Rest in seconds, straight into `template_exercises.rest_s`.
+   *
+   * Day B's values are measured off the app. **Day A's are inferred** - see the
+   * comment on that day.
+   */
+  restS: number
   notes?: string
 }
 
 export interface PlannedDay {
   name: string
+  /** The day's own description in the app, into `templates.notes`. */
+  notes?: string
   exercises: PlannedExercise[]
 }
 
@@ -56,6 +74,11 @@ export interface PlannedDay {
  *
  * Only one, which is why the switch is cheap. Everything else inherits five
  * years of sets, its history-seeded rest default and its load mode.
+ *
+ * `Pallof Press` has since been performed and now arrives from the export like
+ * any other exercise, so this entry is historical. It stays because `seedPlan`
+ * only creates what is missing, and because a re-import against an export
+ * predating 2026-08-13 still needs it.
  */
 export const NEW_EXERCISES = [
   { name: 'Pallof Press', trackingType: 'weight_reps', loadMode: 'total' },
@@ -67,43 +90,59 @@ export const NEW_EXERCISES = [
  */
 export const PLAN: PlannedDay[] = [
   {
+    /**
+     * Exercise order and rep ranges are the app's, verbatim.
+     *
+     * **The rest values are inferred, not measured.** Every movement on this
+     * day has no rest set in Progression, so it falls back to the global
+     * `restPeriod` of 120 s - which is plainly not the intent for a Trap Bar
+     * Deadlift when the written plan says 3-5 min for heavy compounds and the
+     * app's own Day B gives the RDL 240 s. So the `REST_S` bands are applied
+     * here. Do not read these as coming off the backup; the other day's do.
+     */
     name: 'Day A - Trap Bar',
     exercises: [
-      { exercise: 'Trap Bar Deadlift', sets: 2, repMin: 5, repMax: 8, rest: 'compound' },
-      { exercise: 'Smith Machine Bulgarian Split Squat', sets: 2, repMin: 5, repMax: 8, rest: 'compound' },
-      { exercise: 'Smith Machine Incline Bench Press', sets: 2, repMin: 5, repMax: 8, rest: 'compound' },
-      { exercise: 'Bent-Over Barbell Row', sets: 2, repMin: 5, repMax: 8, rest: 'compound' },
-      { exercise: 'Machine Shoulder Press', sets: 2, repMin: 5, repMax: 8, rest: 'machine' },
-      { exercise: 'Assisted Pullup', sets: 2, repMin: 5, repMax: 8, rest: 'machine' },
+      { exercise: 'Trap Bar Deadlift', sets: 2, repMin: 5, repMax: 8, restS: REST_S.compound },
+      { exercise: 'Smith Machine Bulgarian Split Squat', sets: 2, repMin: 5, repMax: 8, restS: REST_S.compound },
+      { exercise: 'Smith Machine Incline Bench Press', sets: 2, repMin: 5, repMax: 8, restS: REST_S.compound },
+      { exercise: 'Bent-Over Barbell Row', sets: 2, repMin: 5, repMax: 8, restS: REST_S.compound },
+      { exercise: 'Machine Shoulder Press', sets: 2, repMin: 5, repMax: 8, restS: REST_S.machine },
+      { exercise: 'Assisted Pullup', sets: 2, repMin: 5, repMax: 8, restS: REST_S.machine },
       // Standing, i.e. the plain `Machine Calf Raise`. The `(Seated)` variant is
       // a separate exercise and appears on Day B.
-      { exercise: 'Machine Calf Raise', sets: 2, repMin: 10, repMax: 15, rest: 'isolation' },
+      { exercise: 'Machine Calf Raise', sets: 2, repMin: 10, repMax: 15, restS: REST_S.isolation },
       {
         exercise: 'Pallof Press',
         sets: 2,
-        repMin: 10,
+        repMin: 6,
         repMax: 10,
-        rest: 'isolation',
+        restS: REST_S.isolation,
         notes: '10 each side',
       },
-      { exercise: 'Incline Dumbbell Hammer Curl', sets: 2, repMin: 6, repMax: 10, rest: 'isolation' },
-      { exercise: 'Chest Dip', sets: 2, repMin: 6, repMax: 10, rest: 'machine' },
+      { exercise: 'Incline Dumbbell Hammer Curl', sets: 2, repMin: 5, repMax: 8, restS: REST_S.isolation },
+      { exercise: 'Chest Dip', sets: 2, repMin: 5, repMax: 8, restS: REST_S.machine },
     ],
   },
   {
+    /**
+     * Order, rep ranges and rests are all measured off the app. The rests do
+     * not fit three bands - 240 / 180 / 120 / 90 - which is why the band enum
+     * stopped being the storage format.
+     */
     name: 'Day B - RDL',
+    notes: 'Skip leg curls and calves under high load',
     exercises: [
-      { exercise: 'Romanian Deadlift', sets: 2, repMin: 5, repMax: 8, rest: 'compound' },
-      { exercise: 'Machine Leg Curl', sets: 2, repMin: 5, repMax: 8, rest: 'machine' },
-      { exercise: 'Machine Single-Leg Extension', sets: 2, repMin: 5, repMax: 8, rest: 'machine' },
-      { exercise: 'Machine Chest Press', sets: 2, repMin: 5, repMax: 8, rest: 'machine' },
-      { exercise: 'Machine Row', sets: 2, repMin: 5, repMax: 8, rest: 'machine' },
-      { exercise: 'Machine Lateral Raise', sets: 2, repMin: 6, repMax: 10, rest: 'isolation' },
-      { exercise: 'Cable Face Pull', sets: 2, repMin: 12, repMax: 15, rest: 'isolation' },
-      { exercise: 'Machine Calf Raise (Seated)', sets: 2, repMin: 12, repMax: 15, rest: 'isolation' },
-      { exercise: 'Cable Crunch', sets: 2, repMin: 8, repMax: 12, rest: 'isolation' },
-      { exercise: 'Machine Preacher Curl', sets: 2, repMin: 6, repMax: 10, rest: 'isolation' },
-      { exercise: 'Cable Pushdown (with Bar Handle)', sets: 2, repMin: 6, repMax: 10, rest: 'isolation' },
+      { exercise: 'Romanian Deadlift', sets: 2, repMin: 5, repMax: 8, restS: 240 },
+      { exercise: 'Machine Leg Curl', sets: 2, repMin: 5, repMax: 8, restS: 180 },
+      { exercise: 'Machine Single-Leg Extension', sets: 2, repMin: 5, repMax: 8, restS: 180 },
+      { exercise: 'Machine Calf Raise (Seated)', sets: 2, repMin: 6, repMax: 10, restS: 120 },
+      { exercise: 'Machine Chest Press', sets: 2, repMin: 5, repMax: 8, restS: 180 },
+      { exercise: 'Machine Row', sets: 2, repMin: 5, repMax: 8, restS: 180 },
+      { exercise: 'Machine Lateral Raise', sets: 2, repMin: 5, repMax: 8, restS: 120 },
+      { exercise: 'Cable Face Pull', sets: 2, repMin: 6, repMax: 10, restS: 90 },
+      { exercise: 'Machine Preacher Curl', sets: 2, repMin: 5, repMax: 8, restS: 90 },
+      { exercise: 'Cable Pushdown (with Bar Handle)', sets: 2, repMin: 5, repMax: 8, restS: 90 },
+      { exercise: 'Cable Crunch', sets: 2, repMin: 5, repMax: 8, restS: 90 },
     ],
   },
 ]

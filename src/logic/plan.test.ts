@@ -8,9 +8,34 @@ describe('plan shape', () => {
       for (const ex of day.exercises) {
         expect(ex.sets).toBe(2)
         expect(ex.repMax).toBeGreaterThanOrEqual(ex.repMin)
-        expect(REST_S[ex.rest]).toBeGreaterThan(0)
+        expect(ex.restS).toBeGreaterThan(0)
       }
     }
+  })
+
+  /**
+   * Measured off the app's own backup on 2026-08-13, so this test is what
+   * catches `plan.ts` drifting away from the programme again. Day A carries no
+   * rests in the app and is deliberately not asserted here.
+   */
+  it('matches the app on Day B, order and rests included', () => {
+    const dayB = PLAN[1]
+    expect(dayB.exercises.map((e) => e.exercise)).toEqual([
+      'Romanian Deadlift',
+      'Machine Leg Curl',
+      'Machine Single-Leg Extension',
+      'Machine Calf Raise (Seated)',
+      'Machine Chest Press',
+      'Machine Row',
+      'Machine Lateral Raise',
+      'Cable Face Pull',
+      'Machine Preacher Curl',
+      'Cable Pushdown (with Bar Handle)',
+      'Cable Crunch',
+    ])
+    expect(dayB.exercises.map((e) => e.restS)).toEqual([
+      240, 180, 180, 120, 180, 180, 120, 90, 90, 90, 90,
+    ])
   })
 
   it('names each exercise once per day', () => {
@@ -26,6 +51,7 @@ describe('plan shape', () => {
     expect(all).toContain('Machine Calf Raise (Seated)')
   })
 
+  /** The bands still seed Day A and any newly created exercise. */
   it('rests heavy compounds longer than isolation work', () => {
     expect(REST_S.compound).toBeGreaterThan(REST_S.machine)
     expect(REST_S.machine).toBeGreaterThan(REST_S.isolation)

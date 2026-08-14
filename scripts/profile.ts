@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import { parseCsv, toRecords, parseNumber } from '../src/logic/csv.ts'
 
-const path = process.argv[2] ?? 'Examples/2026-07-22_08-05-17.csv'
+const path = process.argv[2] ?? 'Examples/2026-08-13_20-35-49.csv'
 const raw = readFileSync(path, 'utf8')
 
 const hasBom = raw.charCodeAt(0) === 0xfeff

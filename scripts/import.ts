@@ -23,7 +23,7 @@ import { openNodeDb } from '../src/db/node.ts'
 import { seedPlanTemplates } from '../src/db/seedPlan.ts'
 import { seedExerciseMuscles } from '../src/db/seedMuscles.ts'
 
-const csvPath = process.argv[2] ?? 'Examples/2026-07-22_08-05-17.csv'
+const csvPath = process.argv[2] ?? 'Examples/2026-08-13_20-35-49.csv'
 const dbPath = process.argv[3] ?? 'db/loadout.sqlite'
 
 // ---------------------------------------------------------------- guard rail

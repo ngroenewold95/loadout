@@ -80,8 +80,8 @@ export async function seedPlanTemplates(db: Db): Promise<SeedResult> {
       }
 
       const { lastInsertId: templateId } = await tx.exec(
-        'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?)',
-        [day.name, order, now, now],
+        'INSERT INTO templates (name, order_index, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+        [day.name, order, day.notes ?? null, now, now],
       )
 
       await tx.batch(
@@ -97,7 +97,7 @@ export async function seedPlanTemplates(db: Db): Promise<SeedResult> {
             e.sets,
             e.repMin,
             e.repMax,
-            REST_S[e.rest],
+            e.restS,
             e.notes ?? null,
             now,
             now,

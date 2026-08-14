@@ -8,7 +8,7 @@ import { applyMigrations } from './migrations.ts'
 import { loadMigrations } from '../../scripts/migrate.ts'
 import { seedPlanTemplates } from './seedPlan.ts'
 import { listTemplates, listTemplateExercises, nextTemplate } from './repo.ts'
-import { PLAN, NEW_EXERCISES, REST_S } from '../logic/plan.ts'
+import { PLAN, NEW_EXERCISES } from '../logic/plan.ts'
 
 const MIGRATIONS = loadMigrations()
 
@@ -52,7 +52,7 @@ describe('seedPlanTemplates', () => {
       expect(rows.map((r) => [r.targetRepMin, r.targetRepMax])).toEqual(
         day.exercises.map((e) => [e.repMin, e.repMax]),
       )
-      expect(rows.map((r) => r.restS)).toEqual(day.exercises.map((e) => REST_S[e.rest]))
+      expect(rows.map((r) => r.restS)).toEqual(day.exercises.map((e) => e.restS))
     }
   })
 
