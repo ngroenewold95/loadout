@@ -11,9 +11,9 @@
  *   npm run import [csvPath]
  */
 import Database from 'better-sqlite3'
-import { readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 import { parseCsv, toRecords } from '../src/logic/csv.ts'
 import { mapExport, COLUMNS } from '../src/logic/progression.ts'
 import { fromKg } from '../src/logic/units.ts'
@@ -23,7 +23,35 @@ import { openNodeDb } from '../src/db/node.ts'
 import { seedPlanTemplates } from '../src/db/seedPlan.ts'
 import { seedExerciseMuscles } from '../src/db/seedMuscles.ts'
 
-const csvPath = process.argv[2] ?? 'Examples/2026-08-13_20-35-49.csv'
+/**
+ * The newest export in `Examples/`, unless one is named explicitly.
+ *
+ * This used to be a hard-coded filename, which is a staleness trap of exactly
+ * the kind `PROJECT.md` already records once: a value that was correct when it
+ * was written and silently stops being correct later. Dropping a fresh export
+ * into the folder would have left `npm run import` rebuilding from the previous
+ * one, reconciling perfectly, and reporting OK - against the wrong file.
+ *
+ * Progression names its exports `YYYY-MM-DD_HH-MM-SS.csv`, so lexicographic
+ * order IS chronological order and no date parsing is needed. The chosen file
+ * is printed and hashed in the report either way, so the answer to "which
+ * export is this" stays on screen.
+ */
+function newestExport(dir = 'Examples'): string {
+  const files = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.toLowerCase().endsWith('.csv'))
+        .sort()
+    : []
+  if (files.length === 0) {
+    throw new Error(
+      `no .csv export found in ${dir}/ - pass one explicitly: npm run import <path>`,
+    )
+  }
+  return join(dir, files[files.length - 1])
+}
+
+const csvPath = process.argv[2] ?? newestExport()
 const dbPath = process.argv[3] ?? 'db/loadout.sqlite'
 
 // ---------------------------------------------------------------- guard rail
