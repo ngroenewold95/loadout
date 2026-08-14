@@ -59,7 +59,9 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   Android edge-swipe gesture and exiting from the root all confirmed. See below.
 - **Weight beside reps in the entry bar, verified on device** - one row, stacked
   handles, all four taps and five drags re-measured. See below.
-- 147 tests passing, typecheck and lint clean
+- **Pre-created set slots, verified on device** - sets listed before they are
+  performed, any of them correctable or deletable in the entry bar. See below.
+- 159 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
 UI stages below consume them:
@@ -302,6 +304,75 @@ Two rules the measurements confirm:
   scroll to reach is not navigation. Stage 5 replaces it with a pager anyway.
 - `Undo last set` moved next to the set chips it removes and lost the word
   "last set". Stage 4 deletes it outright.
+
+---
+
+## Set slots - DONE
+
+Stage 6. An exercise now opens with `Set 1` / `Set 2` already listed and
+rewrites a row **in place** when one is completed, instead of showing nothing at
+all until the first set landed and then appending a chip.
+
+`updateSet` and `deleteSet` had been written and tested since the repo layer and
+were wired to nothing. This stage is what connected them, which is why any set
+can now be corrected rather than only the tail being undoable.
+
+**The entry bar is the only number editor.** Tapping a filled slot points the
+bar at that set: the scrub and the keypad correct it exactly as they enter a
+fresh one. A modal editor was the alternative and was rejected twice over - the
+codebase has **no dialog primitive at all**, so it would have been a component
+built to be used once, and it would have been a second number editor free to
+drift from the first. That is the same reuse argument stage 12 depends on for
+the template editor.
+
+`Cancel` and `Delete set` sit **above** the primary button, not beside it. The
+bar is docked, so growing it moves its top edge and leaves the primary exactly
+where `LOG SET` was - measured, `SAVE` lands on the same y. It also keeps the
+destructive action away from the button a thumb is aiming for, which is the
+lesson from the mis-tap that landed on *Finish workout*.
+
+`Undo` is gone. Deleting the last slot is the same action, and any other slot
+can be corrected too, which `Undo` never allowed. `undoLastSet` stays in
+`repo.ts` because `DbSmoke` still runs it as one of its on-device checks.
+
+### Measured on device, screenshot before every tap
+
+| Step | Measured |
+|---|---|
+| Open cold | `Set 1` and `Set 2` listed with nothing logged, badge 1 lit, header `2 × 5-8 · 0/2 sets · rest 4:00` |
+| Log a set | Slot 1 rewrote **in place** to `355 × 8`, lit badge moved to slot 2, no chip appended |
+| Log the second | `2/2 sets`, and a dashed slot 3 appeared with a lit badge |
+| Tap slot 1 | Ringed, `SAVE` at the **same y** `LOG SET` was, and slot 3's badge went muted |
+| Step −5 twice, save | Slot 1 became `345 × 8`, slot 2 untouched at `355 × 8` |
+| Delete slot 1 | The survivor **renumbered to slot 1**, not left at slot 2 |
+| Process death, reopen | Slot 1 `355 × 8`, slot 2 active, `1/2 sets` |
+
+The delete is the step that could only be proved here: the renumbering is a
+`ROW_NUMBER()` window function running on the device's own SQLite.
+
+### `beyondTarget` is not a slot state, and the tests said so
+
+The first draft had `extra` as a member of the state enum, beside `active` and
+`pending`. Both failing tests pointed at the same thing: once the target is met,
+the trailing slot is **both** where the next set lands and beyond the target,
+and whichever value won, the other fact was lost. Two orthogonal questions, so
+two fields. It also lets a *filled* slot record that it was an extra set, which
+the single enum could never express.
+
+Confirmed on the phone, where slot 3 renders lit **and** dashed at once.
+
+Two smaller rules the tests pinned down:
+
+- **`targetSets` is nullable, and null is not zero.** Zero slots would mean an
+  exercise with no target could never be logged at all. Null also means nothing
+  can be `beyondTarget`, since no target was set for anything to be beyond.
+- **An `editingSetId` that matches no performed set is ignored**, or a stale
+  edit target left over from another exercise would swallow the active slot and
+  leave nowhere for the next set to go.
+
+`slotCount` is `max(targetSets ?? 0, done + 1)`. The `+ 1` keeps one empty slot
+on screen at all times, and is why there is no `Add set` row: `LOG SET` already
+is one.
 
 ---
 
@@ -553,19 +624,24 @@ adb shell "run-as com.groenewold.loadout sh -c 'rm -f databases/loadoutSQLite.db
 see 0 and hunt for an upgrade statement that does not exist. Our `__migrations`
 table remains the real schema ratchet.
 
-**Current device state (2026-08-09):** the phone carries a **340-session**
-lineage, not the canonical 339 the import produces. A pre-0003 snapshot was
-pushed back deliberately so the device's own migration runner had to apply 0003
-and 0004 itself rather than receiving an already-migrated file - which is what
-made that verification real. Re-push `db/for-device.sqlite` to return to 339.
-Check which you have with the `__migrations.applied_at` timestamps: if they all
-fall within milliseconds of each other, the file was migrated on the laptop and
-pushed, so the device path was never exercised.
+**Current device state (2026-08-13): clean.** `db/for-device.sqlite` was
+re-pushed after stage 6, so the phone carries the canonical **339 sessions /
+6,140 sets / 7,463,140 lb, and zero `source = 'native'` rows**. The stage 3
+leftover described below is gone with it.
 
-Re-pushing is also how the device is reset after testing - logging test sets
-writes real `source = 'native'` rows. Stage 3's verification left **an
-in-progress session with test sets in it** on the phone, so re-push before
-treating the device database as clean.
+Re-pushing is how the device is reset after testing, and it is not optional:
+logging test sets writes real `source = 'native'` rows, and **one of those
+permanently blocks a re-import**. Stage 3's verification left an in-progress
+session with test sets on the phone for four days because this was skipped.
+
+The phone previously carried a **340-session** lineage rather than the canonical
+339. A pre-0003 snapshot had been pushed back deliberately so the device's own
+migration runner had to apply 0003 and 0004 itself rather than receiving an
+already-migrated file, which is what made that verification real. That is done
+and does not need repeating. Check which lineage you have from the
+`__migrations.applied_at` timestamps: if they all fall within milliseconds of
+each other, the file was migrated on the laptop and pushed, so the device path
+was never exercised.
 
 **This file must never be committed.** `sets.notes` carries the medical notes
 from `Set Comment`, so it stays in gitignored `db/`. Do not package it as an
@@ -586,6 +662,7 @@ src/
     progression.ts  export -> domain model; the four findings live here
     plan.ts         the current programme, as a SEED; shouldIncreaseLoad
     entry.ts        entry shapes, steppers, scrubSteps, keypad parsing
+    slots.ts        the set rows an exercise shows, performed or not
     plates.ts       inventory-aware plate solver; the `loading` axis
     muscles.ts      the eight groups and their colours; muscleBadge
     exerciseMuscles.ts  exact exercise name -> group, all 87
@@ -794,6 +871,12 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
   `POST_NOTIFICATIONS`.
 - **`am force-stop` did NOT clear notifications** on Android 17, contrary to
   guidance. Use `am kill` to test process death.
+- **`am kill` needs the app BACKGROUNDED and the rest timer stopped**, which the
+  advice above did not say. Measured 2026-08-13: called on the foreground app it
+  is a no-op, and even after `KEYCODE_HOME` the process survived while the
+  rest-timer foreground service was running - correctly, since that is what a
+  foreground service is for. `Skip`, then home, then `am kill`, then confirm
+  with `ps -A | grep loadout` before claiming a cold start was tested.
 - **STRICT tables are narrower than assumed.** They reject `''` and `'abc'` in a
   REAL column (the important cases - 274 blank `Weight` fields) and `'8.5'` in
   an INTEGER column, but **accept and coerce** `'130.00'` → 130. STRICT guards
@@ -939,21 +1022,17 @@ mid-workout exercise editing and an exercise library. The ordering principle
 chosen was **workout flow first**: one workout has to feel right end to end
 before the app grows more screens.
 
-Stages 0 to 5 are **done and verified on device**: the pre-migration backup, the
+Stages 0 to 6 are **done and verified on device**: the pre-migration backup, the
 palette, all the pure logic, repo and schema groundwork, the docked entry bar,
-the navigation shell, and weight beside reps.
+the navigation shell, weight beside reps, and pre-created set slots.
 
 Each stage is independently shippable. Prove each on the phone before starting
 the next - screenshot before every tap.
 
 5. ~~**Entry bar relayout: weight beside reps.**~~ **Done and verified on
    device** - see "Entry bar, weight beside reps" above for the measurements.
-6. **Pre-created set slots.** Derive slots from `targetSets` rather than
-   appending chips: slot `i` renders `doneHere[i]` if present, else `Set i+1`.
-   Per-slot Edit / Delete wired to `updateSet` / `deleteSet`. `Undo last set`
-   disappears, becoming a special case of deleting the last slot. The
-   progression cue stays exactly as is - it is ours, and the reference app has
-   no counterpart.
+6. ~~**Pre-created set slots.**~~ **Done and verified on device** - see "Set
+   slots" above.
 7. **Swipe pager and aligned history.** Replace the tap strip with a CSS
    scroll-snap pager (`snap-x snap-mandatory`, no new dependency), syncing the
    index from an `IntersectionObserver` rather than a scroll handler. Keep a

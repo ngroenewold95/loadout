@@ -15,14 +15,21 @@
  * `PROJECT.md` records as a real mis-tap: the layout used to shift as the rest
  * bar and the set chips appeared, and a tap meant for LOG SET landed on
  * *Finish workout*. Those two are no longer neighbours either.
+ *
+ * **Sets are pre-created slots, and the entry bar is the only editor.** Tapping
+ * a filled slot points the bar at that set: the scrub and the keypad correct it
+ * exactly as they enter a fresh one, so there is no second number editor to
+ * drift. It is also why `Undo` is gone - deleting the last slot is the same
+ * action, and any other slot can be corrected too, which `Undo` never allowed.
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
+  useDeleteSet,
   useRecentPerformance,
   useLogSet,
   useSessionSets,
   useTemplateExercises,
-  useUndoLastSet,
+  useUpdateSet,
 } from '../state/queries.ts'
 import { prefillFor, type PerformedSet, type SessionRow } from '../db/repo.ts'
 import {
@@ -37,6 +44,7 @@ import {
   WEIGHT_STEPS,
 } from '../logic/entry.ts'
 import { shouldIncreaseLoad } from '../logic/plan.ts'
+import { setSlots, type SetSlot } from '../logic/slots.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
 import { EntryField } from './EntryField.tsx'
@@ -66,9 +74,12 @@ export function ActiveSession({ session, onFinish }: Props) {
 
   const [index, setIndex] = useState(0)
   const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
+  /** The set the entry bar is pointed at, or null when it is entering a new one. */
+  const [editingSetId, setEditingSetId] = useState<number | null>(null)
 
   const logSet = useLogSet()
-  const undoLastSet = useUndoLastSet()
+  const updateSet = useUpdateSet()
+  const deleteSet = useDeleteSet()
 
   const current = planned?.[index]
   const shape = current ? entryShape(current.trackingType) : null
@@ -78,9 +89,14 @@ export function ActiveSession({ session, onFinish }: Props) {
     () => (sets ?? []).filter((s) => s.exerciseId === current?.exerciseId),
     [sets, current],
   )
-  // Several sessions back are available now; stage 5 stacks them as cards. The
+  // Several sessions back are available now; stage 7 stacks them as cards. The
   // most recent is what prefills and what the panel shows today.
   const lastTime = current ? history?.get(current.exerciseId)?.[0] : undefined
+
+  const slots = useMemo(
+    () => setSlots(doneHere, current?.targetSets ?? null, editingSetId),
+    [doneHere, current, editingSetId],
+  )
 
   // Draft entry. Re-seeded whenever the exercise changes or a set lands, which
   // is what makes the next set a single tap.
@@ -88,13 +104,28 @@ export function ActiveSession({ session, onFinish }: Props) {
   const [reps, setReps] = useState<number | null>(null)
   const [durationS, setDurationS] = useState<number | null>(null)
 
+  // Moving to another exercise must drop the edit target with it, or the bar
+  // would still be pointed at a set that is no longer on screen.
+  const exerciseId = current?.exerciseId
+  useEffect(() => {
+    setEditingSetId(null)
+  }, [exerciseId])
+
   useEffect(() => {
     if (!current) return
+    // Correcting a set seeds from that set; otherwise from the prefill chain.
+    const editing = (sets ?? []).find((s) => s.id === editingSetId)
+    if (editing) {
+      setWeightKg(editing.weightKg)
+      setReps(editing.reps)
+      setDurationS(editing.durationS)
+      return
+    }
     const fill = prefillFor(sets ?? [], current.exerciseId, lastTime)
     setWeightKg(fill.weightKg)
     setReps(fill.reps ?? current.targetRepMin ?? null)
     setDurationS(fill.durationS)
-  }, [current, sets, lastTime])
+  }, [current, sets, lastTime, editingSetId])
 
   if (!planned || !current || !shape) {
     return <p className="px-5 py-8 text-text-dim">Loading session…</p>
@@ -113,21 +144,66 @@ export function ActiveSession({ session, onFinish }: Props) {
     (!shape.reps || reps != null) &&
     (!shape.duration || durationS != null)
 
+  const busy = logSet.isPending || updateSet.isPending || deleteSet.isPending
+
+  /**
+   * The three values a set carries, in the shape both paths need.
+   *
+   * `enteredValue` and `enteredUnit` travel WITH `weightKg`, never without it.
+   * They hold what was actually typed so history renders in the unit it was
+   * logged in, and a save that patched only `weightKg` would leave a corrected
+   * set showing its old number for good, with no error anywhere.
+   */
+  const payload = {
+    weightKg: shape.weight === 'none' ? null : weightKg,
+    enteredValue: weightKg == null ? null : Number(formatWeight(weightKg, unit)),
+    enteredUnit: weightKg == null ? null : unit,
+    reps: shape.reps ? reps : null,
+    durationS: shape.duration ? durationS : null,
+  }
+
   const handleLog = async () => {
     await logSet.mutateAsync({
       sessionId: session.id,
       exerciseId: current.exerciseId,
-      weightKg: shape.weight === 'none' ? null : weightKg,
-      // What was typed, kept so history renders in the unit it was logged in.
-      enteredValue: weightKg == null ? null : Number(formatWeight(weightKg, unit)),
-      enteredUnit: weightKg == null ? null : unit,
-      reps: shape.reps ? reps : null,
-      durationS: shape.duration ? durationS : null,
+      ...payload,
       baseWeightKg: current.baseWeightKg,
     })
     // Rest starts as a consequence of logging, never as its own tap.
     if (current.restS) setRestEndsAt(await startRest(current.restS))
   }
+
+  const handleSave = async () => {
+    if (editingSetId == null) return
+    await updateSet.mutateAsync({
+      setId: editingSetId,
+      sessionId: session.id,
+      patch: payload,
+    })
+    // Back to entering, which re-seeds the draft from the prefill chain.
+    setEditingSetId(null)
+  }
+
+  const handleDelete = async () => {
+    if (editingSetId == null) return
+    // The repo closes the numbering gap a middle delete leaves, so the slots
+    // renumber themselves on the refetch.
+    await deleteSet.mutateAsync({ setId: editingSetId, sessionId: session.id })
+    setEditingSetId(null)
+  }
+
+  // Progress as a fraction, always visible - `docs/PROGRESSION.md` lists it as
+  // worth taking, and the app showed a target but never how far through it was.
+  const targetLine = [
+    formatTarget(current.targetSets, current.targetRepMin, current.targetRepMax),
+    current.targetSets == null
+      ? `${doneHere.length} sets`
+      : `${doneHere.length}/${current.targetSets} sets`,
+    current.notes,
+    current.restS ? `rest ${formatDuration(current.restS)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -155,16 +231,12 @@ export function ActiveSession({ session, onFinish }: Props) {
           </div>
         </div>
 
-        <p className="text-text-dim px-5 pt-1 text-sm">
-          {formatTarget(current.targetSets, current.targetRepMin, current.targetRepMax)}
-          {current.notes ? ` · ${current.notes}` : ''}
-          {current.restS ? ` · rest ${formatDuration(current.restS)}` : ''}
-        </p>
+        <p className="text-text-dim px-5 pt-1 text-sm">{targetLine}</p>
 
         {/* Exercise strip. Tapping moves between them; supersets just work,
             since order_index follows what actually happened rather than this
             list. Pinned rather than trailing the page, because navigation you
-            have to scroll to find is not navigation. Stage 5 replaces it with
+            have to scroll to find is not navigation. Stage 7 replaces it with
             a swipe pager. */}
         <div className="mt-3 flex gap-2 overflow-x-auto px-5 pb-1">
           {planned.map((p, i) => {
@@ -209,26 +281,20 @@ export function ActiveSession({ session, onFinish }: Props) {
           )}
         </div>
 
-        {/* This session so far, with Undo beside the chip it removes. */}
-        {doneHere.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {doneHere.map((s) => (
-              <span
-                key={s.id}
-                className="rounded-lg bg-emerald-950 px-2 py-1 text-sm tabular-nums text-emerald-300"
-              >
-                {describeSet(s, unit)}
-              </span>
-            ))}
-            <button
-              className="text-text-dim active:text-text px-1 py-1 text-sm disabled:opacity-40"
-              disabled={(sets ?? []).length === 0 || undoLastSet.isPending}
-              onClick={() => undoLastSet.mutate(session.id)}
-            >
-              Undo
-            </button>
-          </div>
-        )}
+        {/* Today's sets, listed before they are performed. */}
+        <div className="mt-3 flex flex-col gap-2">
+          {slots.map((slot) => (
+            <SlotRow
+              key={slot.set?.id ?? `empty-${slot.index}`}
+              slot={slot}
+              unit={unit}
+              disabled={busy}
+              // Tapping the slot already being corrected puts the bar back to
+              // entering, so the row is its own cancel.
+              onSelect={(id) => setEditingSetId((prev) => (prev === id ? null : id))}
+            />
+          ))}
+        </div>
 
         {earnedIncrease && (
           <p className="mt-3 rounded-xl bg-amber-950 px-3 py-2 text-sm text-amber-300">
@@ -282,15 +348,85 @@ export function ActiveSession({ session, onFinish }: Props) {
             </div>
           )}
 
+          {/* Cancel and Delete sit ABOVE the primary button, not beside it. The
+              bar is docked, so growing it moves its top edge and leaves the
+              primary exactly where LOG SET was - which is the whole point of
+              region 3. Delete is also then nowhere near the button a thumb is
+              aiming for. */}
+          {editingSetId != null && (
+            <div className="flex items-center justify-between px-1 text-sm">
+              <button
+                className="text-text-dim active:text-text px-2 py-1"
+                onClick={() => setEditingSetId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="text-danger px-2 py-1 disabled:opacity-40"
+                disabled={busy}
+                onClick={handleDelete}
+              >
+                Delete set
+              </button>
+            </div>
+          )}
+
           <button
             className="bg-primary text-on-primary rounded-2xl py-5 text-xl font-semibold tracking-wide active:opacity-90 disabled:opacity-40"
-            disabled={!canLog || logSet.isPending}
-            onClick={handleLog}
+            disabled={!canLog || busy}
+            onClick={editingSetId == null ? handleLog : handleSave}
           >
-            LOG SET
+            {editingSetId == null ? 'LOG SET' : 'SAVE'}
           </button>
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * One set, whether or not it has happened yet.
+ *
+ * The badge is lit for the slot that owns the entry bar and muted otherwise,
+ * which is the treatment measured off the reference app: `#B4C5FF` for the
+ * active set badge, `#424655` for an inactive one.
+ */
+function SlotRow({
+  slot,
+  unit,
+  disabled,
+  onSelect,
+}: {
+  slot: SetSlot<PerformedSet>
+  unit: Unit
+  disabled: boolean
+  onSelect: (setId: number) => void
+}) {
+  const { set, state, beyondTarget, index } = slot
+  const lit = state === 'active' || state === 'editing'
+
+  return (
+    <button
+      type="button"
+      // An empty slot is not a target: it fills by logging, not by tapping.
+      disabled={!set || disabled}
+      onClick={() => set && onSelect(set.id)}
+      className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left ${
+        // Dashed for a set nobody asked for, following the plate solver's
+        // remainder chip. A solid card would claim it was part of the plan.
+        beyondTarget ? 'border border-dashed border-muted' : 'bg-surface-1'
+      } ${state === 'editing' ? 'ring-primary ring-2' : ''}`}
+    >
+      <span
+        className={`flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums ${
+          lit ? 'bg-primary text-on-primary' : 'bg-muted text-text'
+        }`}
+      >
+        {index + 1}
+      </span>
+      <span className={`tabular-nums ${set ? 'text-text' : 'text-text-dim'}`}>
+        {set ? describeSet(set, unit) : '-'}
+      </span>
+    </button>
   )
 }

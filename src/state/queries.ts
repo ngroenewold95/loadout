@@ -18,6 +18,7 @@ import {
 import { getDb } from '../db/open.ts'
 import {
   activeSession,
+  deleteSet,
   discardSession,
   endSession,
   recentPerformance,
@@ -27,8 +28,9 @@ import {
   logSet,
   nextTemplate,
   startSession,
-  undoLastSet,
+  updateSet,
   type LogSetInput,
+  type UpdateSetInput,
 } from '../db/repo.ts'
 
 export const keys = {
@@ -116,11 +118,28 @@ export function useLogSet() {
   })
 }
 
-export function useUndoLastSet() {
+/**
+ * Correct any set, not just the last one.
+ *
+ * `sessionId` is carried in the variables only so the invalidation can name its
+ * key - the repo call does not need it. Same shape as the `undoLastSet` hook
+ * this replaces.
+ */
+export function useUpdateSet() {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: async (sessionId: number) => undoLastSet(await getDb(), sessionId),
-    onSuccess: (_removed, sessionId) => invalidateAfterSet(client, sessionId),
+    mutationFn: async (v: { setId: number; sessionId: number; patch: UpdateSetInput }) =>
+      updateSet(await getDb(), v.setId, v.patch),
+    onSuccess: (_r, v) => invalidateAfterSet(client, v.sessionId),
+  })
+}
+
+export function useDeleteSet() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: { setId: number; sessionId: number }) =>
+      deleteSet(await getDb(), v.setId),
+    onSuccess: (_r, v) => invalidateAfterSet(client, v.sessionId),
   })
 }
 
