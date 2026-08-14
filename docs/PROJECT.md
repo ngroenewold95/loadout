@@ -35,8 +35,8 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
 - Vite + React 19 + TS 6 + Tailwind 4 + Capacitor 8.5, app installs and runs
 - Schema + migrations 0000-0004, with STRICT and CHECK constraints **proven** to
   reject bad data and partial unique indexes allowing reuse of soft-deleted names
-- `npm run import` - 6,140 sets / 339 sessions / 86 exercises, **total volume
-  7,463,140 lb matching exactly** between CSV and DB (round-trips 5,866 weights
+- `npm run import` - 6,206 sets / 343 sessions / 87 exercises, **total volume
+  7,543,590 lb matching exactly** between CSV and DB (round-trips 5,866 weights
   through lb→kg→lb, so the conversion is verified against real data)
 - Per-exercise rest seeded from actual history; **templates seeded from the
   current programme** (see Programme below)
@@ -44,11 +44,11 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   backends, all queries in `src/db/repo.ts`
 - **Rest timer complete**: floating overlay bubble, red count-up past zero,
   5-second haptic countdown, hides while the app is in front
-- **Logging loop working on device against the real 6,140-set history** - home,
-  A/B rotation, prefill, LOG SET, rest, undo, resume, progression cue
+- **Logging loop working on device against the real imported history** - home,
+  A/B rotation, prefill, LOG SET, rest, correcting a set, resume, progression cue
 - **Backups before device migrations, verified on device.** The runner took its
   own `VACUUM INTO` copy, then applied 0003 and 0004 across the Capacitor
-  bridge, leaving 6,140 sets and 7,463,140 lb intact with zero foreign key
+  bridge, leaving the full history intact with zero foreign key
   violations and enforcement restored. See Corrections for the two faults this
   shook out.
 - **Palette adopted from the reference app** (`docs/PROGRESSION.md`), with
@@ -61,7 +61,7 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   handles, all four taps and five drags re-measured. See below.
 - **Pre-created set slots, verified on device** - sets listed before they are
   performed, any of them correctable or deletable in the entry bar. See below.
-- 159 tests passing, typecheck and lint clean
+- 161 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
 UI stages below consume them:
@@ -72,7 +72,7 @@ UI stages below consume them:
 - `exercises.loading` and `exercises.default_increment_kg`, both **null for all
   87 rows**, so plate chips stay dormant until they are populated
 
-Not built yet: the UI stages 5-14 below, exercise picker, exercise library,
+Not built yet: the UI stages 7-14 below, exercise picker, exercise library,
 template editor, the synced-folder export.
 
 ---
@@ -118,25 +118,41 @@ and proposes a drop-and-recreate every run.
 
 Switched 2026-08-08, replacing the `Day 1`/`Day 2`/`Day 3` split that was
 reverse-engineered from history. **The old data is still valid as history; it is
-just no longer the template.** Source: `Examples/Plan.md`, encoded as
-`src/logic/plan.ts`.
+just no longer the template.** Encoded as `src/logic/plan.ts`.
+
+**Source changed on 2026-08-13: the app, not `Examples/Plan.md`.** The written
+plan was what `plan.ts` had been typed from, and it was never checked against
+what Progression was actually running. The `.pgnbkp` backup made that check
+possible and it failed - see the correction below. `npm run analyze:backup`
+prints the live programme, and that print is now the thing `plan.ts` must
+agree with.
 
 - **Two days, A/B rolling** - explicitly *not* pinned to weekdays. `nextTemplate`
   picks whichever template was performed least recently, so a missed week
   resumes rather than skips.
-- **2 sets × 5-8 reps** throughout (some 6-10, 10-15 on calves/core).
+- **2 sets × 5-8 reps** throughout (6-10 on Pallof Press, the seated calf raise
+  and face pulls; 10-15 on the standing calf raise).
 - **Progression rule: top of the range on both sets → add load.** Encoded as
   `shouldIncreaseLoad`, pure and tested. This is why `target_reps` became
   `target_rep_min` / `target_rep_max` (migrations 0001-0002) - a single number
   cannot express the goal or decide the cue.
-- **Rest by band**, from the plan header: compound 240 s, machine 150 s,
-  isolation/core 75 s. These override the history-seeded per-exercise defaults
-  on template rows, because history came from a different programme.
+- **Rest is per exercise, not by band.** Day B carries explicit values in the
+  app - 240 / 180 / 180 / 120 / 180 / 180 / 120 / 90 / 90 / 90 / 90 s - which
+  three buckets cannot express, so `PlannedExercise.restS` holds seconds.
+  **Day A has no rest set on any movement**, so Progression falls back to its
+  global `restPeriod` of 120 s. That is not the intent for a Trap Bar Deadlift
+  when the written plan says 3-5 min and the app's own RDL gets 240 s, so Day A
+  is seeded from the old `REST_S` bands and `plan.ts` says in a comment that
+  those values are **inferred rather than measured**. Either way these override
+  the history-seeded per-exercise defaults on template rows, because history
+  came from a different programme.
 
 **20 of the 21 exercises already existed** with years of sets behind them, so
 the last-session panel is populated from the first workout. Only `Pallof Press`
-was created. Verified against the real database - every row but that one shows
-recent history.
+was created, and as of the 2026-08-13 export **it has history too** - two sets
+on 2026-08-13 - so it now arrives from the CSV like everything else.
+`NEW_EXERCISES` keeps it anyway, because `seedPlan` only creates what is
+missing and a re-import against an older export still needs it.
 
 Two plan names were ambiguous and resolve to the variant **actually in current
 use**; both alternatives are distinct exercises that must not be merged:
@@ -162,7 +178,8 @@ Four rules the layer exists to enforce:
 
 1. **No query inside a loop.** `batch()` is one bridge crossing for N
    statements. `recentPerformance` answers a whole template in one statement -
-   measured at **14.7 ms for 8 exercises** over the real 6,140-row database.
+   measured at **14.7 ms for 8 exercises** over the real 6,140-row database as it
+   then stood.
 2. **Transactions are scoped to a handle, not the connection.** `transaction()`
    takes the connection and passes a `tx`; everything else queues behind it.
    The device bridge is async, so two overlapping callers would otherwise
@@ -210,11 +227,15 @@ confirmed by screenshot at every step:
 | Home | "Next up" = the template performed least recently. After logging Day A it correctly advanced to Day B. |
 | Opening an exercise | Target `2 × 5-8`, rest `4:00`, and **last time · 2026-07-19 · 355 × 8  355 × 8** on screen permanently |
 | Prefill | 355 lb × 8 already in the fields - logging set 1 is **one tap** |
-| LOG SET | Set recorded, green chip appears, and `RestTimerService` starts as a *side effect* - confirmed in `dumpsys`, never a separate tap |
+| LOG SET | Set recorded, and `RestTimerService` starts as a *side effect* - confirmed in `dumpsys`, never a separate tap |
 | Rest | In-app bar counts down with `+30s` / `Skip`; the overlay bubble stays hidden while the app is in front |
 | Progression | After two sets at the top of the range: **"Top of the range on every set - add load next time."** |
-| Undo | Enables once a set exists; position is reused, not skipped |
 | Resume | Cold start returns straight into the in-progress session |
+
+Two rows of that table have since been overtaken by stage 6 and are written as
+it is now, not as it was: LOG SET appended a **green chip** at the time, and
+there was an **`Undo`** that enabled once a set existed and could only ever take
+the tail. Slots replaced both. See "Set slots" below.
 
 The screen adapts to all four row shapes via `entryShape`. `bodyweight` gives
 weight as **optional** rather than absent - `Chinup` and `Chest Dip` appear both
@@ -301,9 +322,9 @@ Two rules the measurements confirm:
   puts a Cut/Copy/Select-all bar over the content while the selection lives; it
   disappears on the first keystroke, so it costs nothing during entry.
 - The exercise strip moved into the pinned header. Navigation you have to
-  scroll to reach is not navigation. Stage 5 replaces it with a pager anyway.
+  scroll to reach is not navigation. **Stage 7** replaces it with a pager anyway.
 - `Undo last set` moved next to the set chips it removes and lost the word
-  "last set". Stage 4 deletes it outright.
+  "last set". **Stage 6 deleted it outright**, as planned.
 
 ---
 
@@ -535,9 +556,9 @@ monochrome and never letter-only.
 
 ## How load is made up - `loading`, bar weight, plates
 
-Schema and solver exist and are tested; **nothing renders them yet** (stage 7).
-The design is here because it is the part a cold start would otherwise
-re-derive wrongly.
+Schema and solver exist and are tested; **nothing renders them yet** (stage 13,
+renumbered from 7 when the stages were resequenced on 2026-08-13). The design is
+here because it is the part a cold start would otherwise re-derive wrongly.
 
 ### `loading` is a separate axis from `modality`
 
@@ -590,6 +611,12 @@ are easy to get wrong:
   would happily propose one.
 - Counts are **totals, halved per side**. Confirmed by overloading Progression's
   own calculator: an inventory of 8 caps at 4 per side.
+- **The `.pgnbkp` backup does not corroborate the inventory.** Its
+  `config.plateAvailability` holds two opaque plate uuids, both `0`, and ships
+  no plate table to resolve them against, so it records overrides rather than
+  stock. The list above rests on the calculator measurement alone. Saying so is
+  the point: it would be easy to read the backup as authoritative and conclude
+  the inventory is empty.
 - An unreachable target is reported as a **remainder**, rendered as a visually
   distinct dashed chip, never rounded away. The number in the database is the
   one you typed either way, so a chip row that lies is worse than none.
@@ -731,6 +758,8 @@ scripts/
   import.ts         CSV -> SQLite, drop-and-rebuild, reconciliation
   migrate.ts        Node migration runner, backs up first
   profile.ts        format-agnostic CSV profiler
+  analyze-backup.ts read-only reader for the .pgnbkp app backup; joins it to
+                    the CSV to recover exercise names, then prints only
   add-strict.mjs    post-processes drizzle output to add STRICT
 drizzle/            generated SQL migrations + journal
 android/app/src/main/java/com/groenewold/loadout/
@@ -749,10 +778,11 @@ db/                 gitignored - rebuildable until cutover
 ```bash
 npm run dev          # Vite dev server
 npm run build        # tsc -b && vite build
-npm run test         # vitest (147 tests)
+npm run test         # vitest (161 tests)
 npm run lint         # oxlint
 npm run import       # rebuild db/ from the CSV; refuses after cutover
 npm run profile      # profile any CSV's structure
+npm run analyze:backup  # read the .pgnbkp app backup; --all for archived plans
 npm run db:generate  # drizzle-kit generate + add STRICT
 npm run db:migrate   # apply migrations to db/loadout.sqlite (backs up first)
 ```
@@ -806,7 +836,7 @@ PowerShell and binary reads go through bash.
 
 ## What we learned
 
-### From the export (6,140 rows, 2021-07-06 → 2026-07-22)
+### From the export (6,206 rows, 2021-07-06 → 2026-08-13)
 
 Four things the raw file gets wrong about itself. Each would have silently
 corrupted history.
@@ -848,7 +878,8 @@ Smaller, all measured:
 - **100% of history is lb.** One distinct `Weight Unit` value in five years.
 - **RPE is 100% empty.** Column kept; no import plumbing.
 - **91 rows have embedded newlines** in quoted fields - 56 in `Set Comment`,
-  35 in `Workout Description`. Naive line-splitting gives 6,231 instead of 6,140.
+  35 in `Workout Description`. Naive line-splitting gives 6,231 instead of 6,140, measured
+  on the 2026-07-22 export.
 - **Milliseconds are optional**: 27 `Time` and 4 `Set Timestamp` values lack
   them. Parse `HH:MM:SS[.mmm]`.
 - **Reps are written as `"8.00"`** - parse as float, then require integrality.
@@ -872,6 +903,59 @@ Smaller, all measured:
   `Single-Arm` variants are one bell. Dumbbell Shrug and Fly double abruptly in
   Jan 2023 and were discontinued mid-2023 - flagged, not modelled.
 
+### From the `.pgnbkp` backup (2026-08-13)
+
+A second artefact arrived alongside the export:
+`Examples/progression.2026-08-13_20-35-55.pgnbkp`. **Despite the extension it is
+plain JSON** - Progression's whole app state, not the flat CSV. Read it with
+`npm run analyze:backup`, which writes nothing.
+
+Four top-level keys: `sessions[343]`, `exercises[36]`, `programs[11]`,
+`profile`, `config`.
+
+**It has no exercise names.** Every set names an `exerciseId`, and only the
+user's own custom exercises appear in `exercises[]`; the built-in catalogue is
+not in the file. So the analyser recovers the map by joining each performance to
+the CSV on clock time, weight and reps. That resolves **6,198 of 6,206
+performances and all 87 exercise ids, with zero ambiguities** - a name that two
+ids both claim would be reported, and none is.
+
+- **`completedAt` is a true epoch**, which the CSV's wall clock is not. The join
+  needs both a -7 h and a -8 h offset to land (4,136 rows and 2,062), so the
+  difference between the two files measures the daylight-saving offset in force
+  on the day. `progression.ts` reads the CSV clock as UTC deliberately and this
+  does not change that; it does mean a real local timeline is now derivable if
+  one is ever wanted.
+- **The 8 unmatched rows are the already-known corrupt session**, not a flaw in
+  the join. They were performed on 2025-11-27 and the CSV files them under
+  session `2025-12-02 15:55:55.154`, because `Date` is the session's *end* date
+  and that session was left running 119 h. The analyser prints where the CSV put
+  each one rather than dropping it.
+- **Metadata coverage is 26 of 87, and that is the ceiling** on any future
+  backfill of `exercises.loading` from this file. Those 26 carry `equipment`
+  (`BARBELL`, `MACHINE`, `SMITH_MACHINE`, `DUMBBELL`, `KETTLEBELL`,
+  `BODYWEIGHT`, `OTHER`) and `muscles`. The other 61 - every barbell lift, every
+  cable movement, most machines - are built-ins and carry nothing.
+- **`mark` is a per-set qualifier the CSV drops entirely**: 9 rows across five
+  years, `FORCED` 4, `FAILURE` 3, `PARTIAL` 1, `NEGATIVE` 1. Small enough to
+  ignore, but it is a column the export does not have at all, so it can only
+  ever come from here.
+- **The muscle table agrees.** Cross-checked against `exerciseMuscles.ts` for
+  the 26: 23 agree, 2 disagree (`Back Strengthening` ours back vs theirs ABS,
+  `Mobility` ours deliberately null vs theirs ABS) and 1 is not comparable
+  (`Suitcase Carry` is FOREARMS, which is not one of our eight groups). Neither
+  disagreement is worth acting on.
+- **`profile.preferences` is the settings source** if `app_settings` is ever
+  populated: `weightUnit POUNDS`, `step 5`, `restPeriod 120000`,
+  `equipmentWeight 45` lb, `startRestAutomatically true`,
+  `showPlateCalculator true`.
+- **`config.plateAvailability` does NOT enumerate the inventory.** It holds two
+  opaque plate uuids, both with count `0`, and no plate table ships in the
+  backup to resolve them against. It records overrides, not stock. The
+  2.5/5/10/25/35/45 lb inventory in "How load is made up" stands on its own
+  measurement - taken by overloading the app's calculator - and this file
+  neither confirms nor contradicts it.
+
 ### From the device
 
 **A chronometer notification survives process death.** Verified with the app
@@ -892,6 +976,18 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
 
 ### Corrections - recorded so they are not repeated
 
+- **`plan.ts` did not match the programme, and nothing would have caught it.**
+  It was typed from `Examples/Plan.md` and then treated as settled, but the
+  written plan is a document and the app is the thing being trained against.
+  Measured off the backup on 2026-08-13: **nine rep ranges differed** (Cable
+  Face Pull 12-15 vs the app's 6-10, Cable Crunch 8-12 vs 5-8, Pallof Press
+  10-10 vs 6-10, and six more), **Day B's order differed** in two places, and
+  **every rest value differed** because the app does not use the header's three
+  bands at all. Resolved by making the app the source. The general lesson is the
+  one this section keeps repeating: a value copied out of a document is not
+  measured, and this file should not have written it down as though it were.
+  `plan.test.ts` now asserts Day B's order and rests explicitly, so the next
+  drift fails a test instead of going unnoticed for five weeks.
 - `setRequestPromotedOngoing` / `setShortCriticalText` are on
   **`NotificationCompat.Builder`** (androidx core 1.17.0), *not* the platform
   `Notification.Builder`. An earlier claim that the API did not exist was wrong;
@@ -1165,7 +1261,7 @@ Then, still blocking cutover:
 - Only `load_mode` is needed at import, and only for 4 exercises - a five-minute
   file. `modality`, `primary_muscle`, `loading` stay nullable and get filled in
   lazily. `primary_muscle` is now 83 of 87; `modality` and `loading` are still
-  empty, and stage 7 needs `loading`.
+  empty, and **stage 13** needs `loading`.
 - Vitest for tests; `db/*` and `Examples/` gitignored
 - App id `com.groenewold.loadout` - baked in at `cap init`; changing it orphans
   the on-device database

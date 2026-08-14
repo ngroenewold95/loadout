@@ -325,6 +325,31 @@ overlay bubble; rest timer `Start automatically` ("Starts when you complete a
 set"), `Vibrate` and `Sound`. Section headers sit on a raised bar in the primary
 tint.
 
+### Their actual values, read out of the backup
+
+Everything above this line was read off the screen. `profile.preferences` in
+`Examples/progression.*.pgnbkp` is the same settings as stored data, which
+corroborates several of the observations rather than resting on them, and
+supplies the numbers the screen does not show. Printed by
+`npm run analyze:backup`.
+
+| Preference | Value | Note |
+|---|---|---|
+| `weightUnit` | `POUNDS` | matches "100% of history is lb" |
+| `distanceUnit` | `KILOMETERS` | the export's `Distance Unit` agrees |
+| `step` | `5` | the scrub increment, confirming the ±5 primary step |
+| `restPeriod` | `120000` | the global fallback when a movement sets no rest |
+| `equipmentWeight` | `45` lb | one global bar weight, no per-exercise override - the fault that made `default_base_weight_kg` necessary |
+| `startRestAutomatically` | `true` | the rest timer as a side effect of logging |
+| `showPlateCalculator` | `true` | the chip row is on |
+| `keepScreenOn` | `false` | the setting exists and is off |
+| `notifications` | `["VIBRATION"]` | vibrate on, sound off |
+
+The global `restPeriod` is the one that changed a decision here: Day A of the
+current programme sets no rest on any movement, so **every Day A exercise really
+rests 120 s in Progression**, including the Trap Bar Deadlift. `plan.ts`
+deliberately does not copy that - see Programme (current) in `PROJECT.md`.
+
 ---
 
 ## Where loadout already agrees
