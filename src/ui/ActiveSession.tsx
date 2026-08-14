@@ -240,36 +240,46 @@ export function ActiveSession({ session, onFinish }: Props) {
       {/* Region 3: docked, and it never moves. */}
       <div className="bg-surface-1 pb-safe-b shrink-0">
         <div className="flex flex-col gap-3 px-4 pt-3 pb-3">
-          {shape.weight !== 'none' && (
-            <EntryField
-              display={weightKg == null ? '' : formatWeight(weightKg, unit)}
-              unit={unit}
-              stepLabel={String(WEIGHT_STEPS[unit][0])}
-              onStep={(steps) =>
-                setWeightKg((kg) => stepWeight(kg, steps * WEIGHT_STEPS[unit][0], unit))
-              }
-              parse={(text) => parseWeight(text, unit)}
-              onParsed={setWeightKg}
-            />
-          )}
+          {/* Weight then reps, on ONE row, in the order they are spoken: "355
+              for 8". Each field carries its own stacked handles, so the row
+              needs nothing but a gap. A shape with only one field just gets a
+              full-width version of the same component. */}
+          <div className="flex items-stretch gap-3">
+            {shape.weight !== 'none' && (
+              <EntryField
+                display={weightKg == null ? '' : formatWeight(weightKg, unit)}
+                unit={unit}
+                stepLabel={String(WEIGHT_STEPS[unit][0])}
+                onStep={(steps) =>
+                  setWeightKg((kg) => stepWeight(kg, steps * WEIGHT_STEPS[unit][0], unit))
+                }
+                parse={(text) => parseWeight(text, unit)}
+                onParsed={setWeightKg}
+              />
+            )}
 
-          {shape.reps && (
-            <EntryField
-              display={reps == null ? '' : String(reps)}
-              unit="reps"
-              stepLabel="1"
-              onStep={(steps) => setReps((r) => stepReps(r, steps))}
-              parse={parseReps}
-              onParsed={setReps}
-            />
-          )}
+            {shape.reps && (
+              <EntryField
+                display={reps == null ? '' : String(reps)}
+                unit="reps"
+                stepLabel="1"
+                onStep={(steps) => setReps((r) => stepReps(r, steps))}
+                parse={parseReps}
+                onParsed={setReps}
+              />
+            )}
+          </div>
 
+          {/* Duration keeps a row of its own. It never coexists with reps, so
+              pairing it with the weight would leave a lopsided row. */}
           {shape.duration && (
-            <EntryField
-              display={formatDuration(durationS ?? 0)}
-              stepLabel="15s"
-              onStep={(steps) => setDurationS((d) => stepDuration(d, steps * 15))}
-            />
+            <div className="flex items-stretch gap-3">
+              <EntryField
+                display={formatDuration(durationS ?? 0)}
+                stepLabel="15s"
+                onStep={(steps) => setDurationS((d) => stepDuration(d, steps * 15))}
+              />
+            </div>
           )}
 
           <button

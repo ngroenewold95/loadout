@@ -57,6 +57,8 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   keypad both work. See below.
 - **Navigation stack and system back, verified on device.** Back arrow, the
   Android edge-swipe gesture and exiting from the root all confirmed. See below.
+- **Weight beside reps in the entry bar, verified on device** - one row, stacked
+  handles, all four taps and five drags re-measured. See below.
 - 147 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
@@ -239,9 +241,11 @@ exactly the viewport and only the middle region scrolls.
 **The unknown this stage existed to settle: `windowSoftInputMode` needs no
 change, and `@capacitor/keyboard` is not needed.** The attribute is **absent**
 from `AndroidManifest.xml`, so the activity runs at Android's default
-`adjustUnspecified` - and measured on device, the WebView resizes anyway. With
-the keypad open the entry bar rode above it and LOG SET sat at the **identical
-y** as with the keypad closed. Nothing native was touched for this stage.
+`adjustUnspecified` - and measured on device, the WebView resizes anyway, so the
+entry bar rides above the keypad and LOG SET stays fully reachable. Nothing
+native was touched for this stage. (An earlier version of this paragraph also
+claimed LOG SET sat at the *identical y* with the keypad open. It does not, and
+could not - see Corrections.)
 
 The layout-shift mis-tap is now structurally impossible rather than merely
 unlikely. Logging a set makes the rest bar appear, which pushes the header down
@@ -282,10 +286,13 @@ Two rules the measurements confirm:
   makes precision cheap. It could not be settled until the scrub existed. It
   now does, so this is the version to judge; `WEIGHT_STEPS[unit][1]` is still
   defined and restoring the row is a small edit if the thumb disagrees.
-- **The number and its unit are fixed-width columns.** Letting the number take
-  the free space left `lb` stranded against the `+5` handle. Fixed columns also
-  align the weight and the reps with each other, which is the whole point of
-  tabular numerals.
+- ~~**The number and its unit are fixed-width columns.**~~ **Superseded in
+  stage 5.** Letting the number take the free space left `lb` stranded against
+  the `+5` handle, and fixed columns aligned the weight with the reps. The
+  second half of that reason was about them being *stacked rows*; side by side
+  there is nothing to align with, and a fixed column pushes `137.5` into the
+  handles. The unit is still pinned beside the number, which is what the first
+  half was really about.
 - **The number is a `<label>`, not a bare `<input>`.** The full width between
   the handles opens the keypad, verified by tapping the empty space beside `lb`.
 - **Focus selects the value**, so typing replaces rather than appends. Android
@@ -295,6 +302,52 @@ Two rules the measurements confirm:
   scroll to reach is not navigation. Stage 5 replaces it with a pager anyway.
 - `Undo last set` moved next to the set chips it removes and lost the word
   "last set". Stage 4 deletes it outright.
+
+---
+
+## Entry bar, weight beside reps - DONE
+
+Stage 5. The handles no longer flank the number; they stack into one column
+beside it, so weight and reps sit on **one row** in the order they are spoken,
+"355 for 8". The two numbers you are about to log are read together, and stacked
+they were two glances and about 130 px of screen. The row is roughly 100 px.
+
+Layout only. `scrubSteps`, `SCRUB_PX_PER_STEP` and every rule the stage 3
+measurements established are untouched, and the table below re-proves them in
+the new geometry.
+
+### Measured on device, screenshot before every tap
+
+| Gesture | Measured |
+|---|---|
+| Tap `−5` on weight | 355 -> 350 |
+| Tap `+1` on reps | 8 -> 9 |
+| Drag up 500 device px on `−5` | 350 -> 370, i.e. **+4 steps, not −4** |
+| Drag up 500 device px on `+5` | 370 -> 390, i.e. +4 steps |
+| Drag down 300 device px on `+5` | 390 -> 380, i.e. −2 steps |
+| Tap the number | keypad with `.` `,` and `−`; the value arrives selected, and typing 225 replaced 380 |
+| Back with the keypad open | closes the keypad and stays in the app; the IME consumes it before the nav listener sees it |
+
+The 300 px drag is the truncation rule proving itself: 300 device px is 114 CSS
+px, which is 2.86 steps, and 2 steps were emitted. None of the five drags added
+a spurious tap on release.
+
+### Decisions taken here
+
+- **The handles are `size-tap`, 48 px, down from about 64x60.** That is
+  Android's own minimum and there is no room below it, since the whole point of
+  the row is that two handles fit beside two numbers.
+- **They are `bg-muted`, not `bg-surface-3`.** They sit ON the field now rather
+  than on the entry bar, and `#272a32` against the field's `#282c38` is not a
+  step at all - looked at on the phone, the first version read as floating text
+  rather than as buttons. The reference app is no help here: its steppers are
+  bare chevrons with no fill to measure.
+- **Each field carries a `bg-field` box.** `--color-field` had been defined from
+  the Progression histograms and used nowhere. Side by side, "which number is
+  which" has to be answerable without reading the unit.
+- **Plus above minus**, the way a stepper reads.
+- Duration keeps a row of its own. It never coexists with reps, so pairing it
+  with the weight would leave a lopsided row.
 
 ---
 
@@ -788,6 +841,17 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
   reports two different zeroes is a trap for the next caller. **The lesson is
   about the document, not the code** - "tested" is a claim like any other here
   and has to be checked before it is written down.
+- **"LOG SET sat at the identical y with the keypad open" was wrong.** The
+  stage 3 section still claims it. Re-measured in stage 5: LOG SET's centre is
+  at y2215 with the keypad closed and **y1325 with it open**, having moved up
+  about 890 device px against a viewport that shrank by about 950. It could not
+  have been otherwise - the bar is docked to the bottom of a viewport that the
+  WebView resizes, so it must move. The finding that stage 3 was actually
+  testing still stands and is the one that matters: **the WebView resizes with
+  no `windowSoftInputMode` change and no `@capacitor/keyboard`**, so the entry
+  bar rides above the keypad and LOG SET stays fully reachable. The mis-tap that
+  started all this was caused by the rest bar and set chips moving the layout,
+  which the three regions fixed; the keypad was never that failure.
 - **Module side effects bite.** `scripts/migrate.ts` ran a migration merely by
   being imported, holding the DB open and causing `EBUSY` on delete. CLI entry
   points are now guarded with `import.meta.url === pathToFileURL(argv[1]).href`.
@@ -875,20 +939,15 @@ mid-workout exercise editing and an exercise library. The ordering principle
 chosen was **workout flow first**: one workout has to feel right end to end
 before the app grows more screens.
 
-Stages 0 to 4 are **done and verified on device**: the pre-migration backup, the
+Stages 0 to 5 are **done and verified on device**: the pre-migration backup, the
 palette, all the pure logic, repo and schema groundwork, the docked entry bar,
-and the navigation shell.
+the navigation shell, and weight beside reps.
 
 Each stage is independently shippable. Prove each on the phone before starting
 the next - screenshot before every tap.
 
-5. **Entry bar relayout: weight beside reps.** Weight first, then reps, each
-   with its step buttons stacked as one column beside the number rather than
-   flanking it. Layout only - `scrubSteps` and the measured 40 CSS px per step
-   do not change, and "dragging up increases on either handle" must survive.
-   The handles get smaller, so check the tap target stays at or above 44 CSS px
-   in its short dimension. Duration keeps the full-width row; it never coexists
-   with reps.
+5. ~~**Entry bar relayout: weight beside reps.**~~ **Done and verified on
+   device** - see "Entry bar, weight beside reps" above for the measurements.
 6. **Pre-created set slots.** Derive slots from `targetSets` rather than
    appending chips: slot `i` renders `doneHere[i]` if present, else `Set i+1`.
    Per-slot Edit / Delete wired to `updateSet` / `deleteSet`. `Undo last set`
