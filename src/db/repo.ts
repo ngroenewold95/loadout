@@ -130,6 +130,43 @@ export function listTemplateExercises(
   )
 }
 
+/**
+ * What THIS session is doing, as opposed to what its template says.
+ *
+ * Same row shape as `listTemplateExercises` on purpose: `ActiveSession` swaps
+ * one hook for the other and nothing else changes. The difference is that these
+ * rows are editable - swapping an exercise, cutting one or raising `target_sets`
+ * with `Add set` writes here, and the programme is untouched.
+ */
+export function listSessionExercises(
+  db: Db,
+  sessionId: number,
+): Promise<TemplateExerciseRow[]> {
+  return db.query<TemplateExerciseRow>(
+    `SELECT se.exercise_id AS "exerciseId",
+            e.name,
+            se.order_index AS "orderIndex",
+            se.target_sets AS "targetSets",
+            se.target_rep_min AS "targetRepMin",
+            se.target_rep_max AS "targetRepMax",
+            se.rest_s AS "restS",
+            se.notes,
+            e.tracking_type AS "trackingType",
+            e.default_load_mode AS "loadMode",
+            e.implement_count AS "implementCount",
+            e.preferred_unit AS "preferredUnit",
+            e.default_base_weight_kg AS "baseWeightKg",
+            e.primary_muscle AS "primaryMuscle"
+       FROM session_exercises se
+       JOIN exercises e ON e.id = se.exercise_id
+      WHERE se.session_id = ?
+        AND se.deleted_at IS NULL
+        AND e.deleted_at IS NULL
+      ORDER BY se.order_index`,
+    [sessionId],
+  )
+}
+
 // ---------------------------------------------------------------- exercises
 
 export interface ExerciseSummary {
@@ -269,6 +306,36 @@ export async function startSession(
         now,
       ],
     )
+
+    /**
+     * Snapshot the template into `session_exercises`.
+     *
+     * One INSERT ... SELECT rather than a row at a time: it is one bridge
+     * crossing whatever the template's length, and it is inside the same
+     * transaction as the session row, so a session can never exist with half a
+     * plan attached to it.
+     *
+     * `rest_s` resolves through the exercise default here, exactly as migration
+     * 0005's backfill does. A snapshot that stored null would re-resolve later
+     * against a default that had since changed, which is the opposite of what a
+     * snapshot is for.
+     */
+    if (input.templateId != null) {
+      await tx.exec(
+        `INSERT INTO session_exercises
+           (session_id, exercise_id, order_index, target_sets,
+            target_rep_min, target_rep_max, rest_s, notes, created_at, updated_at)
+         SELECT ?, te.exercise_id, te.order_index, te.target_sets,
+                te.target_rep_min, te.target_rep_max,
+                COALESCE(te.rest_s, e.default_rest_s), te.notes, ?, ?
+           FROM template_exercises te
+           JOIN exercises e ON e.id = te.exercise_id AND e.deleted_at IS NULL
+          WHERE te.template_id = ? AND te.deleted_at IS NULL
+          ORDER BY te.order_index`,
+        [lastInsertId, now, now, input.templateId],
+      )
+    }
+
     return lastInsertId
   })
 }
@@ -296,6 +363,13 @@ export async function discardSession(db: Db, sessionId: number): Promise<void> {
   await db.batch([
     {
       sql: `UPDATE sets SET deleted_at = ?, updated_at = ?
+             WHERE session_id = ? AND deleted_at IS NULL`,
+      params: [now, now, sessionId],
+    },
+    {
+      // The plan snapshot goes with the session it belonged to. Leaving it live
+      // would keep rows pointing at a discarded parent for good.
+      sql: `UPDATE session_exercises SET deleted_at = ?, updated_at = ?
              WHERE session_id = ? AND deleted_at IS NULL`,
       params: [now, now, sessionId],
     },

@@ -33,8 +33,8 @@ import {
   useDeleteSet,
   useRecentPerformance,
   useLogSet,
+  useSessionExercises,
   useSessionSets,
-  useTemplateExercises,
   useUpdateSet,
 } from '../state/queries.ts'
 import {
@@ -87,7 +87,9 @@ export function ActiveSession({ session }: Props) {
   const push = useNav((s) => s.push)
   const openSummary = () => push({ kind: 'summary', sessionId: session.id })
 
-  const { data: planned } = useTemplateExercises(session.templateId)
+  // The session's own copy of the plan, never the template: editing a workout
+  // in progress must not rewrite the programme. See `session_exercises`.
+  const { data: planned } = useSessionExercises(session.id)
   const { data: sets } = useSessionSets(session.id)
   const exerciseIds = useMemo(() => (planned ?? []).map((p) => p.exerciseId), [planned])
   const { data: history } = useRecentPerformance(exerciseIds, session.id)

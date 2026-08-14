@@ -203,6 +203,52 @@ export const templateExercises = sqliteTable(
   ],
 )
 
+/**
+ * What THIS workout is doing, copied from the template when it starts.
+ *
+ * The reason this table exists at all: `ActiveSession` used to read its exercise
+ * list straight from `template_exercises`, so swapping an exercise mid-workout,
+ * cutting one, or adding a set would have edited the PROGRAMME - silently
+ * rewriting what every future workout does because a machine was busy once.
+ * A session is a performance of a plan, not the plan.
+ *
+ * It is also what makes `Add set` possible. The reference app raises the target
+ * from `0/2` to `0/3`, so an extra set is declared before it is performed and
+ * the fraction stays meaningful; that needs a per-session number to increment,
+ * and this is it.
+ *
+ * Deliberately a copy rather than a diff against the template: a template edited
+ * or deleted later must not change what a session in progress is doing, and
+ * `templates` already carries `ON DELETE SET NULL` for the same reason.
+ */
+export const sessionExercises = sqliteTable(
+  'session_exercises',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sessionId: integer('session_id')
+      .notNull()
+      .references(() => sessions.id),
+    exerciseId: integer('exercise_id')
+      .notNull()
+      .references(() => exercises.id),
+    orderIndex: integer('order_index').notNull(),
+    /** Raised by `Add set`, lowered by deleting an unperformed slot. */
+    targetSets: integer('target_sets'),
+    targetRepMin: integer('target_rep_min'),
+    targetRepMax: integer('target_rep_max'),
+    restS: integer('rest_s'),
+    notes: text('notes'),
+    ...timestamps,
+  },
+  (t) => [
+    index('session_exercises_session').on(t.sessionId, t.orderIndex),
+    check(
+      'session_exercises_rep_range_ck',
+      sql`target_rep_min IS NULL OR target_rep_max IS NULL OR target_rep_max >= target_rep_min`,
+    ),
+  ],
+)
+
 export const sessions = sqliteTable(
   'sessions',
   {
@@ -387,6 +433,7 @@ export type Session = typeof sessions.$inferSelect
 export type SetRow = typeof sets.$inferSelect
 export type Template = typeof templates.$inferSelect
 export type TemplateExercise = typeof templateExercises.$inferSelect
+export type SessionExercise = typeof sessionExercises.$inferSelect
 export type Equipment = typeof equipment.$inferSelect
 export type LoadMode = (typeof LOAD_MODES)[number]
 export type Loading = (typeof LOADINGS)[number]

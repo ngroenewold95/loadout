@@ -36,6 +36,13 @@
       "when": 1786333285949,
       "tag": "0004_unique_black_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786684088619,
+      "tag": "0005_elite_mac_gargan",
+      "breakpoints": true
     }
   ]
 }

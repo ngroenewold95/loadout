@@ -22,6 +22,7 @@ import {
   discardSession,
   endSession,
   recentPerformance,
+  listSessionExercises,
   listSessionSets,
   listTemplateExercises,
   listTemplates,
@@ -40,6 +41,7 @@ export const keys = {
   activeSession: ['session', 'active'] as const,
   session: (id: number) => ['session', id] as const,
   sessionSets: (id: number) => ['session', id, 'sets'] as const,
+  sessionExercises: (id: number) => ['session', id, 'exercises'] as const,
   recentPerformance: (ids: number[], exclude?: number) =>
     ['recentPerformance', [...ids].sort((a, b) => a - b), exclude ?? null] as const,
 }
@@ -79,6 +81,20 @@ export function useSession(sessionId: number | null | undefined) {
     queryKey: keys.session(sessionId ?? -1),
     enabled: sessionId != null,
     queryFn: async () => sessionById(await getDb(), sessionId!),
+  })
+}
+
+/**
+ * What this workout is doing - the session's own copy, not the template.
+ *
+ * The template hook still exists for Home and for the template editor; a live
+ * workout must never read it, or editing the workout would edit the programme.
+ */
+export function useSessionExercises(sessionId: number | null | undefined) {
+  return useQuery({
+    queryKey: keys.sessionExercises(sessionId ?? -1),
+    enabled: sessionId != null,
+    queryFn: async () => listSessionExercises(await getDb(), sessionId!),
   })
 }
 
