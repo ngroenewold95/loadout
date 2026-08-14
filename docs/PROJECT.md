@@ -371,8 +371,30 @@ Two smaller rules the tests pinned down:
   leave nowhere for the next set to go.
 
 `slotCount` is `max(targetSets ?? 0, done + 1)`. The `+ 1` keeps one empty slot
-on screen at all times, and is why there is no `Add set` row: `LOG SET` already
-is one.
+on screen at all times, so `LOG SET` always has a visible destination.
+
+**An unperformed slot reads its rep target**, `5-8 reps`, not a placeholder.
+Taken from the reference app after the first version shipped a bare `-` and the
+obvious question came back: how do I add a set. The row should say what it is
+asking for while you are aiming at it.
+
+### What this stage got wrong, and stage 9 owes
+
+The trailing slot model is **not** what the reference app does, re-measured on
+2026-08-13 (see `docs/PROGRESSION.md`). Progression has a real `Add set` row
+that **raises the target**: `0/2 Sets done` becomes `0/3`. Extra sets are
+declared before they are performed, so the fraction stays meaningful.
+
+Ours lets extras just happen and the denominator never moves, which gives the
+self-contradictory `2/2` with a dashed slot hanging underneath. That was a known
+worry when the slot states were designed and it was called wrong.
+
+It was not fixed here because it cannot be: `targetSets` comes from
+`template_exercises`, so raising it would **edit the programme**, which is
+exactly the fault `session_exercises` exists to fix. Holding the count in
+component state instead would give a planned set that vanishes on process death,
+and surviving process death is something this app already gets right. So the
+real `Add set` belongs to stage 9, listed there.
 
 ---
 
@@ -624,10 +646,13 @@ adb shell "run-as com.groenewold.loadout sh -c 'rm -f databases/loadoutSQLite.db
 see 0 and hunt for an upgrade statement that does not exist. Our `__migrations`
 table remains the real schema ratchet.
 
-**Current device state (2026-08-13): clean.** `db/for-device.sqlite` was
-re-pushed after stage 6, so the phone carries the canonical **339 sessions /
-6,140 sets / 7,463,140 lb, and zero `source = 'native'` rows**. The stage 3
-leftover described below is gone with it.
+**Current device state (2026-08-13): NOT clean.** `db/for-device.sqlite` was
+re-pushed after stage 6, which restored the canonical 339 sessions / 6,140 sets
+/ 7,463,140 lb with zero `source = 'native'` rows - and then the app was used
+for real, so the phone now carries an in-progress session with logged sets in
+it. That is ordinary use, not a mistake, but it means **the device database is
+again not a clean baseline**, and one `native` row is all it takes to block a
+re-import. Re-push before treating it as one.
 
 Re-pushing is how the device is reset after testing, and it is not optional:
 logging test sets writes real `source = 'native'` rows, and **one of those
@@ -1057,6 +1082,11 @@ the next - screenshot before every tap.
    (`searchExercises` is written, tested and ordered by recency), then add,
    remove, reorder and `Replace`. Soft deletes only. Templates are untouched;
    the one route back to a template is an explicit action on the summary.
+   **Also the real `Add set`**, which belongs here and nowhere earlier: a row
+   below the slots that raises this session's `target_sets` so `2/2` becomes
+   `2/3`, with `Delete` on an unperformed slot to undo it. It needs a
+   per-session row to increment, which is what this stage creates. Stage 6's
+   trailing dashed slot is the stand-in until then.
 10. **Rest timer as an app-bar pill**, replacing `RestBar.tsx`: draining fill
     while counting down, solid red counting up past zero, tap to skip. **Fix the
     cold-start gap here** - `restEndsAt` is React state, so a killed app loses

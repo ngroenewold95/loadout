@@ -7,7 +7,7 @@ design. This one covers its **UI and the run-a-workout flow**.
 
 Everything here was measured on the device. Anything unverified says so.
 
-Last updated: 2026-08-09
+Last updated: 2026-08-13
 
 ---
 
@@ -22,6 +22,12 @@ every menu on the logging screen opened, the Settings tree walked, and the plate
 solver deliberately overloaded. Both scratch workouts were **deleted afterwards**
 through the workout overflow menu; the Home stats were unchanged at 5 workouts
 and 82 sets before and after.
+
+**Second pass, 2026-08-13**, for `Add set` specifically. Same method: a scratch
+workout from the `2 Day Full Body` program, deleted through the workout overflow
+and its `Delete workout?` / Cancel / Delete dialog. Home stats were **98 sets,
+713 reps, 59 tons before and identical after**. Follow this procedure every
+time; the reference app holds real training history and is not a sandbox.
 
 Two constraints on the method:
 
@@ -56,13 +62,45 @@ while the layout is moving.
 
 ### Sets are pre-created slots, not appended chips
 
-An exercise opens with `Set 1` / `Set 2` / `Set 3` already listed, an `Add set`
-row underneath, and a header reading `0/3 Sets done`. Completing a set rewrites
-that row **in place** to `185 lb x 8 reps` and moves the active badge to the
-next slot.
+An exercise opens with `Set 1` / `Set 2` already listed, an `Add set` row
+underneath, and a header reading `0/2 Sets done`. Completing a set rewrites that
+row **in place** to `185 lb x 8 reps` and moves the active badge to the next
+slot.
 
 Every slot carries its own overflow with **Edit / Delete**, so any set can be
-corrected. loadout appends chips and can only undo the tail.
+corrected.
+
+### `Add set`, measured 2026-08-13
+
+Re-inspected because loadout shipped slots without it. Four facts, all from a
+scratch workout that was deleted afterwards:
+
+- **It is a row, not a button.** A `+` in the same left badge column as the set
+  numbers, labelled `Add set`, sitting at the bottom of the Today card as a peer
+  of the set rows. Not a FAB, not a header action.
+- **It raises the target.** `0/2 Sets done` became **`0/3`**, and the workout
+  overview card behind it read `0/3` too. So an extra set is *declared* before
+  it is performed, and the fraction stays meaningful all the way through.
+- **An unperformed slot reads `5–8 Reps`** - the rep target, not a placeholder.
+  The row tells you what you are aiming for while you are aiming at it. A new
+  slot inherits the same target.
+- **Unperformed slots have the overflow too**, with **`Edit` greyed out** and
+  `Delete` live. So a planned set can be un-planned, taking `0/3` back to `0/2`.
+  Edit is disabled because there is nothing yet to edit.
+
+**The consequence for loadout:** a faithful `Add set` needs somewhere per
+session to hold the count. `targetSets` comes from `template_exercises`, so
+incrementing it would edit the programme - which is exactly the bug the
+`session_exercises` snapshot exists to fix. It therefore belongs to that stage,
+not before it. The rep-target label was taken immediately, being free.
+
+### There is a workout overview screen
+
+Not previously recorded. `Start workout` lands on a **list of exercise cards**,
+each with its muscle badge, name, `0/2 Sets done` and an overflow, plus a blue
+`+` FAB. Tapping a card opens the per-exercise logging screen; the pager moves
+between exercises from there. So the flow is list, then exercise, not straight
+into the first exercise the way loadout does it.
 
 ### History is a stack of session cards, positionally aligned
 

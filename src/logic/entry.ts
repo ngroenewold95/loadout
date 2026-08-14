@@ -175,6 +175,22 @@ export function formatDuration(seconds: number): string {
     : `${minutes}:${pad(s % 60)}`
 }
 
+/**
+ * Just the rep half of a target: `5-8`, or `10` when min and max agree.
+ *
+ * Separate from `formatTarget` because a set slot that has not been performed
+ * yet shows the reps it is asking for and nothing else. Measured off the
+ * reference app, where an unperformed row reads `5–8 Reps` rather than a
+ * placeholder - it tells you what you are aiming for while you are aiming.
+ */
+export function formatRepTarget(
+  repMin: number | null,
+  repMax: number | null,
+): string | null {
+  if (repMin == null) return null
+  return repMax == null || repMax === repMin ? String(repMin) : `${repMin}-${repMax}`
+}
+
 /** The rep target as the UI writes it: `2 × 5-8`, or `2 × 10` when fixed. */
 export function formatTarget(
   sets: number | null,
@@ -182,12 +198,7 @@ export function formatTarget(
   repMax: number | null,
 ): string | null {
   if (sets == null && repMin == null) return null
-  const reps =
-    repMin == null
-      ? null
-      : repMax == null || repMax === repMin
-        ? String(repMin)
-        : `${repMin}-${repMax}`
+  const reps = formatRepTarget(repMin, repMax)
   if (sets == null) return reps
   return reps == null ? `${sets} sets` : `${sets} × ${reps}`
 }

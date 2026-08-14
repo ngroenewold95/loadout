@@ -35,6 +35,7 @@ import { prefillFor, type PerformedSet, type SessionRow } from '../db/repo.ts'
 import {
   entryShape,
   formatDuration,
+  formatRepTarget,
   formatTarget,
   parseReps,
   parseWeight,
@@ -192,6 +193,12 @@ export function ActiveSession({ session, onFinish }: Props) {
     setEditingSetId(null)
   }
 
+  // What an unperformed slot reads. The reference app puts the rep target here
+  // rather than a placeholder, which is better for the obvious reason: the row
+  // tells you what you are aiming for while you are aiming at it.
+  const repTarget = formatRepTarget(current.targetRepMin, current.targetRepMax)
+  const emptyLabel = repTarget ? `${repTarget} reps` : '-'
+
   // Progress as a fraction, always visible - `docs/PROGRESSION.md` lists it as
   // worth taking, and the app showed a target but never how far through it was.
   const targetLine = [
@@ -288,6 +295,7 @@ export function ActiveSession({ session, onFinish }: Props) {
               key={slot.set?.id ?? `empty-${slot.index}`}
               slot={slot}
               unit={unit}
+              emptyLabel={emptyLabel}
               disabled={busy}
               // Tapping the slot already being corrected puts the bar back to
               // entering, so the row is its own cancel.
@@ -394,11 +402,14 @@ export function ActiveSession({ session, onFinish }: Props) {
 function SlotRow({
   slot,
   unit,
+  emptyLabel,
   disabled,
   onSelect,
 }: {
   slot: SetSlot<PerformedSet>
   unit: Unit
+  /** What an unperformed slot reads: the rep target it is asking for. */
+  emptyLabel: string
   disabled: boolean
   onSelect: (setId: number) => void
 }) {
@@ -425,7 +436,7 @@ function SlotRow({
         {index + 1}
       </span>
       <span className={`tabular-nums ${set ? 'text-text' : 'text-text-dim'}`}>
-        {set ? describeSet(set, unit) : '-'}
+        {set ? describeSet(set, unit) : emptyLabel}
       </span>
     </button>
   )

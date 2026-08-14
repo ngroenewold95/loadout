@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   entryShape,
   formatDuration,
+  formatRepTarget,
   formatTarget,
   type Parsed,
   parseReps,
@@ -176,5 +177,17 @@ describe('formatTarget', () => {
     expect(formatTarget(2, 10, 10)).toBe('2 × 10')
     expect(formatTarget(2, null, null)).toBe('2 sets')
     expect(formatTarget(null, null, null)).toBeNull()
+  })
+})
+
+describe('formatRepTarget', () => {
+  it('writes the rep half alone, for an unperformed set slot', () => {
+    expect(formatRepTarget(5, 8)).toBe('5-8')
+    expect(formatRepTarget(10, 10)).toBe('10')
+    // A min with no max is a floor, not a range.
+    expect(formatRepTarget(6, null)).toBe('6')
+    expect(formatRepTarget(null, null)).toBeNull()
+    // A max alone says nothing without its floor, so it is not a target.
+    expect(formatRepTarget(null, 8)).toBeNull()
   })
 })
