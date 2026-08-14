@@ -167,6 +167,132 @@ export function listSessionExercises(
   )
 }
 
+/**
+ * Change how many sets THIS session is asking for.
+ *
+ * The whole point of the snapshot: `2/2 sets` becomes `2/3` and the programme is
+ * untouched. The reference app declares an extra set before performing it, which
+ * is what keeps the fraction meaningful - see `docs/PROGRESSION.md`.
+ *
+ * Clamped at the number already performed, not at zero. Lowering the target
+ * below the sets that exist would render `3/2`, and the sets are the facts here;
+ * the target is the intention.
+ */
+export async function setPlannedSets(
+  db: Db,
+  sessionId: number,
+  exerciseId: number,
+  targetSets: number,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const performed = await tx.queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM sets
+        WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+      [sessionId, exerciseId],
+    )
+    const floor = performed?.n ?? 0
+    const next = Math.max(floor, Math.round(targetSets))
+
+    await tx.exec(
+      `UPDATE session_exercises SET target_sets = ?, updated_at = ?
+        WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+      [next, Date.now(), sessionId, exerciseId],
+    )
+    return next
+  })
+}
+
+/**
+ * Add an exercise to this workout, at the end.
+ *
+ * Targets come from the exercise's own defaults rather than being invented: rest
+ * from `default_rest_s`, which is seeded per exercise from five years of actual
+ * gaps between sets. Rep targets are left null, which `setSlots` reads as "no
+ * target", so it can never be complete and never blocks the summary wrongly -
+ * the user decides when an unplanned exercise is done.
+ */
+export async function addSessionExercise(
+  db: Db,
+  sessionId: number,
+  exerciseId: number,
+  targetSets: number | null = null,
+): Promise<void> {
+  const now = Date.now()
+  await db.exec(
+    `INSERT INTO session_exercises
+       (session_id, exercise_id, order_index, target_sets, rest_s, created_at, updated_at)
+     SELECT ?, ?,
+            COALESCE((SELECT MAX(order_index) + 1 FROM session_exercises
+                       WHERE session_id = ? AND deleted_at IS NULL), 0),
+            ?, e.default_rest_s, ?, ?
+       FROM exercises e
+      WHERE e.id = ? AND e.deleted_at IS NULL`,
+    [sessionId, exerciseId, sessionId, targetSets, now, now, exerciseId],
+  )
+}
+
+/**
+ * Take an exercise out of this workout.
+ *
+ * **Soft delete, and it does not touch the sets.** Anything already logged
+ * against it stays logged: it was performed, and a plan change is not a reason
+ * to lose a fact. The summary reads `sets`, so those sets still appear there.
+ */
+export async function removeSessionExercise(
+  db: Db,
+  sessionId: number,
+  exerciseId: number,
+): Promise<void> {
+  const now = Date.now()
+  await db.exec(
+    `UPDATE session_exercises SET deleted_at = ?, updated_at = ?
+      WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+    [now, now, sessionId, exerciseId],
+  )
+}
+
+/**
+ * Swap one exercise for another, keeping its position and targets.
+ *
+ * The machine was busy, not the plan wrong - so `Replace` keeps the sets, reps
+ * and rest and changes only which movement they apply to.
+ */
+export async function replaceSessionExercise(
+  db: Db,
+  sessionId: number,
+  exerciseId: number,
+  withExerciseId: number,
+): Promise<void> {
+  await db.exec(
+    `UPDATE session_exercises SET exercise_id = ?, updated_at = ?
+      WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+    [withExerciseId, Date.now(), sessionId, exerciseId],
+  )
+}
+
+/**
+ * Write a new order for the whole list.
+ *
+ * Takes every id and renumbers from zero rather than nudging one row up or down.
+ * A pairwise swap has to read the neighbour first, and two of them racing would
+ * leave two rows sharing an `order_index`; one batch of the whole list cannot.
+ */
+export async function reorderSessionExercises(
+  db: Db,
+  sessionId: number,
+  exerciseIds: number[],
+): Promise<void> {
+  if (exerciseIds.length === 0) return
+  const now = Date.now()
+  await db.batch(
+    exerciseIds.map((exerciseId, order) => ({
+      sql: `UPDATE session_exercises SET order_index = ?, updated_at = ?
+             WHERE session_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+      params: [order, now, sessionId, exerciseId],
+    })),
+  )
+}
+
 // ---------------------------------------------------------------- exercises
 
 export interface ExerciseSummary {

@@ -31,10 +31,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   useDeleteSet,
+  useEditSessionPlan,
   useRecentPerformance,
   useLogSet,
   useSessionExercises,
   useSessionSets,
+  useSetPlannedSets,
   useUpdateSet,
 } from '../state/queries.ts'
 import {
@@ -111,6 +113,8 @@ export function ActiveSession({ session }: Props) {
   const logSet = useLogSet()
   const updateSet = useUpdateSet()
   const deleteSet = useDeleteSet()
+  const planSets = useSetPlannedSets()
+  const plan = useEditSessionPlan(session.id)
 
   const current = planned?.[index]
   const shape = current ? entryShape(current.trackingType) : null
@@ -229,7 +233,13 @@ export function ActiveSession({ session }: Props) {
     (!shape.reps || reps != null) &&
     (!shape.duration || durationS != null)
 
-  const busy = logSet.isPending || updateSet.isPending || deleteSet.isPending
+  const busy =
+    logSet.isPending ||
+    updateSet.isPending ||
+    deleteSet.isPending ||
+    planSets.isPending ||
+    plan.remove.isPending ||
+    plan.reorder.isPending
 
   /**
    * The three values a set carries, in the shape both paths need.
@@ -283,6 +293,36 @@ export function ActiveSession({ session }: Props) {
     })
     // Back to entering, which re-seeds the draft from the prefill chain.
     setEditingSetId(null)
+  }
+
+  /**
+   * Take an exercise out of the workout.
+   *
+   * The pager index is clamped afterwards, because removing the last exercise
+   * while standing on it would leave `index` pointing past the end of the list
+   * and the screen would render its loading state forever.
+   */
+  const handleRemove = async (exerciseId: number) => {
+    await plan.remove.mutateAsync({ exerciseId })
+    setIndex(Math.min(index, planned.length - 2))
+  }
+
+  /**
+   * Move an exercise one place, and follow it.
+   *
+   * The whole order is rewritten rather than two rows swapped - see
+   * `reorderSessionExercises`. Following it with the pager is the point: you
+   * moved this exercise, so this exercise is still the one you are looking at.
+   */
+  const handleMove = async (exerciseId: number, by: -1 | 1) => {
+    const ids = planned.map((p) => p.exerciseId)
+    const from = ids.indexOf(exerciseId)
+    const to = from + by
+    if (from < 0 || to < 0 || to >= ids.length) return
+
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    await plan.reorder.mutateAsync({ exerciseIds: ids })
+    setIndex(to)
   }
 
   const handleDelete = async () => {
@@ -360,6 +400,17 @@ export function ActiveSession({ session }: Props) {
               </button>
             )
           })}
+
+          {/* The strip IS the exercise list, so `+` at the end of it is where
+              adding one belongs. Session-level, and always reachable without
+              scrolling to the bottom of a page. */}
+          <button
+            aria-label="Add exercise"
+            onClick={() => push({ kind: 'picker', sessionId: session.id })}
+            className="border-muted text-text-dim active:text-text flex size-tap shrink-0 items-center justify-center rounded-full border border-dashed text-lg"
+          >
+            +
+          </button>
         </div>
       </div>
 
@@ -387,6 +438,16 @@ export function ActiveSession({ session }: Props) {
             editingSetId={i === index ? editingSetId : null}
             disabled={busy}
             onSelectSet={(id) => setEditingSetId((prev) => (prev === id ? null : id))}
+            onPlanSets={(exerciseId, targetSets) =>
+              planSets.mutate({ sessionId: session.id, exerciseId, targetSets })
+            }
+            onReplace={(exerciseId) =>
+              push({ kind: 'picker', sessionId: session.id, replacing: exerciseId })
+            }
+            onRemove={handleRemove}
+            onMove={handleMove}
+            canMoveEarlier={i > 0}
+            canMoveLater={i < planned.length - 1}
           />
         ))}
       </div>
@@ -489,6 +550,12 @@ function ExercisePage({
   editingSetId,
   disabled,
   onSelectSet,
+  onPlanSets,
+  onReplace,
+  onRemove,
+  onMove,
+  canMoveEarlier,
+  canMoveLater,
 }: {
   pageIndex: number
   planned: TemplateExerciseRow
@@ -499,6 +566,13 @@ function ExercisePage({
   editingSetId: number | null
   disabled: boolean
   onSelectSet: (setId: number) => void
+  /** Raise or lower how many sets THIS session is asking for. */
+  onPlanSets: (exerciseId: number, targetSets: number) => void
+  onReplace: (exerciseId: number) => void
+  onRemove: (exerciseId: number) => void
+  onMove: (exerciseId: number, by: -1 | 1) => void
+  canMoveEarlier: boolean
+  canMoveLater: boolean
 }) {
   const unit: Unit = planned.preferredUnit
   const done = useMemo(
@@ -549,8 +623,36 @@ function ExercisePage({
             // Tapping the slot already being corrected puts the bar back to
             // entering, so the row is its own cancel.
             onSelect={onSelectSet}
+            // A planned set nobody has performed can be un-planned, which is
+            // what makes `Add set` reversible. The ACTIVE slot is deliberately
+            // not removable: it is where the next set lands, and taking it away
+            // would leave LOG SET with nowhere to put anything.
+            onUnplan={
+              slot.set == null && slot.state === 'pending' && planned.targetSets != null
+                ? () => onPlanSets(planned.exerciseId, planned.targetSets! - 1)
+                : undefined
+            }
           />
         ))}
+
+        {/* `Add set` is a ROW, not a button, in the same badge column as the
+            set numbers - measured off the reference app. It raises this
+            session's target, so `2/2 sets` becomes `2/3` and the fraction stays
+            honest, rather than an extra set just happening and the denominator
+            never moving. */}
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() =>
+            onPlanSets(planned.exerciseId, (planned.targetSets ?? done.length) + 1)
+          }
+          className="border-muted text-text-dim active:text-text flex items-center gap-3 rounded-xl border border-dashed px-3 py-2 text-left disabled:opacity-40"
+        >
+          <span className="bg-muted text-text flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold">
+            +
+          </span>
+          <span className="text-sm">Add set</span>
+        </button>
       </div>
 
       {earnedIncrease && (
@@ -577,6 +679,40 @@ function ExercisePage({
           ))
         )}
       </div>
+
+      {/* Plan edits, at the bottom because they are rare and because none of
+          them should sit near a thumb aiming at LOG SET. They write to this
+          session only - the programme is not touched by any of them. */}
+      <div className="text-text-dim mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-sm">
+        <button
+          className="active:text-text disabled:opacity-30"
+          disabled={disabled || !canMoveEarlier}
+          onClick={() => onMove(planned.exerciseId, -1)}
+        >
+          Move earlier
+        </button>
+        <button
+          className="active:text-text disabled:opacity-30"
+          disabled={disabled || !canMoveLater}
+          onClick={() => onMove(planned.exerciseId, 1)}
+        >
+          Move later
+        </button>
+        <button
+          className="active:text-text disabled:opacity-40"
+          disabled={disabled}
+          onClick={() => onReplace(planned.exerciseId)}
+        >
+          Replace
+        </button>
+        <button
+          className="text-danger ml-auto disabled:opacity-40"
+          disabled={disabled}
+          onClick={() => onRemove(planned.exerciseId)}
+        >
+          Remove
+        </button>
+      </div>
     </div>
   )
 }
@@ -594,6 +730,7 @@ function SlotRow({
   emptyLabel,
   disabled,
   onSelect,
+  onUnplan,
 }: {
   slot: SetSlot<PerformedSet>
   unit: Unit
@@ -601,32 +738,50 @@ function SlotRow({
   emptyLabel: string
   disabled: boolean
   onSelect: (setId: number) => void
+  /** Given only for a planned set that can be taken back off the plan. */
+  onUnplan?: () => void
 }) {
   const { set, state, beyondTarget, index } = slot
   const lit = state === 'active' || state === 'editing'
 
   return (
-    <button
-      type="button"
-      // An empty slot is not a target: it fills by logging, not by tapping.
-      disabled={!set || disabled}
-      onClick={() => set && onSelect(set.id)}
-      className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left ${
+    <div
+      className={`flex items-center gap-3 rounded-xl pr-1 pl-3 ${
         // Dashed for a set nobody asked for, following the plate solver's
         // remainder chip. A solid card would claim it was part of the plan.
         beyondTarget ? 'border border-dashed border-muted' : 'bg-surface-1'
       } ${state === 'editing' ? 'ring-primary ring-2' : ''}`}
     >
-      <span
-        className={`flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums ${
-          lit ? 'bg-primary text-on-primary' : 'bg-muted text-text'
-        }`}
+      <button
+        type="button"
+        // An empty slot is not a target: it fills by logging, not by tapping.
+        disabled={!set || disabled}
+        onClick={() => set && onSelect(set.id)}
+        className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left"
       >
-        {index + 1}
-      </span>
-      <span className={`tabular-nums ${set ? 'text-text' : 'text-text-dim'}`}>
-        {set ? describeSet(set, unit) : emptyLabel}
-      </span>
-    </button>
+        <span
+          className={`flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums ${
+            lit ? 'bg-primary text-on-primary' : 'bg-muted text-text'
+          }`}
+        >
+          {index + 1}
+        </span>
+        <span className={`tabular-nums ${set ? 'text-text' : 'text-text-dim'}`}>
+          {set ? describeSet(set, unit) : emptyLabel}
+        </span>
+      </button>
+
+      {onUnplan && (
+        <button
+          type="button"
+          aria-label={`Remove set ${index + 1}`}
+          disabled={disabled}
+          onClick={onUnplan}
+          className="text-text-dim active:text-text flex size-tap shrink-0 items-center justify-center disabled:opacity-40"
+        >
+          ×
+        </button>
+      )}
+    </div>
   )
 }

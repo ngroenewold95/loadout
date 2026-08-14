@@ -41,6 +41,11 @@ export type Screen =
   | { kind: 'spikes' }
   /** What a workout added up to. **Not a save** - see `SessionSummary.tsx`. */
   | { kind: 'summary'; sessionId: number }
+  /**
+   * Choose an exercise for a live workout. With `replacing` set it swaps that
+   * exercise in place, keeping its sets, reps and rest; without, it appends.
+   */
+  | { kind: 'picker'; sessionId: number; replacing?: number }
 
 interface NavState {
   /** Root first. Empty means the root screen, which is not a member. */

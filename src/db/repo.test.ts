@@ -11,11 +11,16 @@ import { applyMigrations } from './migrations.ts'
 import { loadMigrations } from '../../scripts/migrate.ts'
 import {
   activeSession,
+  addSessionExercise,
   discardSession,
+  removeSessionExercise,
+  reorderSessionExercises,
+  replaceSessionExercise,
   endSession,
   deleteSet,
   recentPerformance,
   updateSet,
+  listSessionExercises,
   listSessionSets,
   listTemplates,
   listTemplateExercises,
@@ -23,6 +28,7 @@ import {
   logSet,
   prefillFor,
   searchExercises,
+  setPlannedSets,
   startSession,
   undoLastSet,
 } from './repo.ts'
@@ -553,6 +559,121 @@ describe('prefillFor', () => {
 
   it('reports "none" rather than guessing for a brand new exercise', () => {
     expect(prefillFor([], 999, undefined).source).toBe('none')
+  })
+})
+
+describe('session plan snapshot', () => {
+  /** A template with one exercise, and a session started from it. */
+  async function seedStarted(targetSets = 2): Promise<{
+    sessionId: number
+    exerciseId: number
+    templateId: number
+  }> {
+    const exerciseId = await seedExercise('Squat', { restS: 180 })
+    const now = Date.now()
+    const { lastInsertId: templateId } = await db.exec(
+      'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, 0, ?, ?)',
+      ['Day 1', now, now],
+    )
+    await db.exec(
+      `INSERT INTO template_exercises (template_id, exercise_id, order_index, target_sets,
+                                       target_rep_min, target_rep_max, rest_s, created_at, updated_at)
+       VALUES (?, ?, 0, ?, 5, 8, NULL, ?, ?)`,
+      [templateId, exerciseId, targetSets, now, now],
+    )
+    const sessionId = await startSession(db, { templateId, name: 'Day 1' })
+    return { sessionId, exerciseId, templateId }
+  }
+
+  it('copies the template when the session starts', async () => {
+    const { sessionId } = await seedStarted()
+    const [row] = await listSessionExercises(db, sessionId)
+    expect(row).toMatchObject({
+      name: 'Squat',
+      targetSets: 2,
+      targetRepMin: 5,
+      targetRepMax: 8,
+      // Resolved through the exercise default, not left as the template's null.
+      restS: 180,
+    })
+  })
+
+  it('raises the target without touching the template', async () => {
+    const { sessionId, exerciseId, templateId } = await seedStarted()
+
+    await setPlannedSets(db, sessionId, exerciseId, 3)
+    const [session] = await listSessionExercises(db, sessionId)
+    expect(session.targetSets).toBe(3)
+
+    // The whole reason this table exists: the programme is unchanged.
+    const [template] = await listTemplateExercises(db, templateId)
+    expect(template.targetSets).toBe(2)
+  })
+
+  it('will not lower the target below the sets already performed', async () => {
+    const { sessionId, exerciseId } = await seedStarted()
+    await logSet(db, { sessionId, exerciseId, weightKg: 100, reps: 5 })
+    await logSet(db, { sessionId, exerciseId, weightKg: 100, reps: 5 })
+
+    // Otherwise the header would read `2/1 sets`. The sets are facts; the
+    // target is only the intention.
+    const next = await setPlannedSets(db, sessionId, exerciseId, 1)
+    expect(next).toBe(2)
+    const [row] = await listSessionExercises(db, sessionId)
+    expect(row.targetSets).toBe(2)
+  })
+
+  it('adds an exercise at the end, with its own rest default', async () => {
+    const { sessionId } = await seedStarted()
+    const bench = await seedExercise('Bench Press', { restS: 210 })
+
+    await addSessionExercise(db, sessionId, bench)
+    const rows = await listSessionExercises(db, sessionId)
+    expect(rows.map((r) => r.name)).toEqual(['Squat', 'Bench Press'])
+    expect(rows[1].restS).toBe(210)
+    // No rep target: nothing decided one, so `setSlots` treats it as open and
+    // it can never be wrongly declared complete.
+    expect(rows[1].targetRepMin).toBeNull()
+  })
+
+  it('removing an exercise keeps the sets already logged against it', async () => {
+    const { sessionId, exerciseId } = await seedStarted()
+    await logSet(db, { sessionId, exerciseId, weightKg: 100, reps: 5 })
+
+    await removeSessionExercise(db, sessionId, exerciseId)
+    expect(await listSessionExercises(db, sessionId)).toEqual([])
+    // The set was performed. A plan change is not a reason to lose a fact, and
+    // the summary still has to show it.
+    expect(await listSessionSets(db, sessionId)).toHaveLength(1)
+  })
+
+  it('replace keeps the position and the targets', async () => {
+    const { sessionId, exerciseId } = await seedStarted(3)
+    const bench = await seedExercise('Bench Press')
+
+    await replaceSessionExercise(db, sessionId, exerciseId, bench)
+    const [row] = await listSessionExercises(db, sessionId)
+    // The machine was busy, not the plan wrong.
+    expect(row).toMatchObject({ name: 'Bench Press', targetSets: 3, targetRepMax: 8 })
+  })
+
+  it('reorder renumbers the whole list from zero', async () => {
+    const { sessionId, exerciseId } = await seedStarted()
+    const bench = await seedExercise('Bench Press')
+    const row = await seedExercise('Barbell Row')
+    await addSessionExercise(db, sessionId, bench)
+    await addSessionExercise(db, sessionId, row)
+
+    await reorderSessionExercises(db, sessionId, [row, exerciseId, bench])
+    const rows = await listSessionExercises(db, sessionId)
+    expect(rows.map((r) => r.name)).toEqual(['Barbell Row', 'Squat', 'Bench Press'])
+    expect(rows.map((r) => r.orderIndex)).toEqual([0, 1, 2])
+  })
+
+  it('discarding a session takes its plan with it', async () => {
+    const { sessionId } = await seedStarted()
+    await discardSession(db, sessionId)
+    expect(await listSessionExercises(db, sessionId)).toEqual([])
   })
 })
 

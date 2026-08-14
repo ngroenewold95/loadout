@@ -5,6 +5,7 @@ import { ActiveSession } from './ui/ActiveSession'
 import { AppHeader } from './ui/AppHeader'
 import { Home } from './ui/Home'
 import { SessionSummary } from './ui/SessionSummary'
+import { SessionExercisePicker } from './ui/ExercisePicker'
 import { DbSmoke } from './ui/DbSmoke'
 import { TimerSpike } from './ui/TimerSpike'
 
@@ -23,6 +24,7 @@ const client = new QueryClient({
 const SCREEN_TITLES: Record<Screen['kind'], string> = {
   spikes: 'Debug',
   summary: 'Summary',
+  picker: 'Choose exercise',
 }
 
 function Shell() {
@@ -65,6 +67,11 @@ function Shell() {
           </div>
         ) : screen?.kind === 'summary' ? (
           <SessionSummary sessionId={screen.sessionId} />
+        ) : screen?.kind === 'picker' ? (
+          <SessionExercisePicker
+            sessionId={screen.sessionId}
+            replacing={screen.replacing}
+          />
         ) : isLoading ? (
           <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
         ) : session ? (

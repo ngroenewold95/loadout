@@ -18,7 +18,11 @@ import {
 import { getDb } from '../db/open.ts'
 import {
   activeSession,
+  addSessionExercise,
   deleteSet,
+  removeSessionExercise,
+  reorderSessionExercises,
+  replaceSessionExercise,
   discardSession,
   endSession,
   recentPerformance,
@@ -28,7 +32,9 @@ import {
   listTemplates,
   logSet,
   nextTemplate,
+  searchExercises,
   sessionById,
+  setPlannedSets,
   startSession,
   updateSet,
   type LogSetInput,
@@ -72,6 +78,21 @@ export function useActiveSession() {
   return useQuery({
     queryKey: keys.activeSession,
     queryFn: async () => activeSession(await getDb()),
+  })
+}
+
+/**
+ * The exercise picker's list, ordered by most recently performed.
+ *
+ * `keepPreviousData` is what stops the list blanking between keystrokes: the
+ * query is a couple of milliseconds against a local file, so the flash of an
+ * empty list would be the only thing anyone noticed.
+ */
+export function useExerciseSearch(term: string) {
+  return useQuery({
+    queryKey: ['exercises', 'search', term] as const,
+    queryFn: async () => searchExercises(await getDb(), term),
+    placeholderData: (previous) => previous,
   })
 }
 
@@ -168,6 +189,57 @@ export function useDeleteSet() {
       deleteSet(await getDb(), v.setId),
     onSuccess: (_r, v) => invalidateAfterSet(client, v.sessionId),
   })
+}
+
+/** `Add set`, and un-planning one. Writes to the session, not the template. */
+export function useSetPlannedSets() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: { sessionId: number; exerciseId: number; targetSets: number }) =>
+      setPlannedSets(await getDb(), v.sessionId, v.exerciseId, v.targetSets),
+    onSuccess: (_r, v) => {
+      void client.invalidateQueries({ queryKey: keys.sessionExercises(v.sessionId) })
+    },
+  })
+}
+
+/**
+ * Editing the workout in progress: add, remove, replace, reorder.
+ *
+ * One hook rather than four, because all four invalidate exactly the same key
+ * and differ only in which repo call they make. `recentPerformance` is
+ * invalidated too: it is keyed by the exercise ids on screen, and adding or
+ * replacing changes that set.
+ */
+export function useEditSessionPlan(sessionId: number) {
+  const client = useQueryClient()
+  const invalidate = () => {
+    void client.invalidateQueries({ queryKey: keys.sessionExercises(sessionId) })
+    void client.invalidateQueries({ queryKey: ['recentPerformance'] })
+  }
+
+  const add = useMutation({
+    mutationFn: async (v: { exerciseId: number; targetSets?: number | null }) =>
+      addSessionExercise(await getDb(), sessionId, v.exerciseId, v.targetSets ?? null),
+    onSuccess: invalidate,
+  })
+  const remove = useMutation({
+    mutationFn: async (v: { exerciseId: number }) =>
+      removeSessionExercise(await getDb(), sessionId, v.exerciseId),
+    onSuccess: invalidate,
+  })
+  const replace = useMutation({
+    mutationFn: async (v: { exerciseId: number; withExerciseId: number }) =>
+      replaceSessionExercise(await getDb(), sessionId, v.exerciseId, v.withExerciseId),
+    onSuccess: invalidate,
+  })
+  const reorder = useMutation({
+    mutationFn: async (v: { exerciseIds: number[] }) =>
+      reorderSessionExercises(await getDb(), sessionId, v.exerciseIds),
+    onSuccess: invalidate,
+  })
+
+  return { add, remove, replace, reorder }
 }
 
 export function useEndSession() {
