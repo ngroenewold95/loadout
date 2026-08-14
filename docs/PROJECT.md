@@ -646,18 +646,22 @@ adb shell "run-as com.groenewold.loadout sh -c 'rm -f databases/loadoutSQLite.db
 see 0 and hunt for an upgrade statement that does not exist. Our `__migrations`
 table remains the real schema ratchet.
 
-**Current device state (2026-08-13): NOT clean.** `db/for-device.sqlite` was
-re-pushed after stage 6, which restored the canonical 339 sessions / 6,140 sets
-/ 7,463,140 lb with zero `source = 'native'` rows - and then the app was used
-for real, so the phone now carries an in-progress session with logged sets in
-it. That is ordinary use, not a mistake, but it means **the device database is
-again not a clean baseline**, and one `native` row is all it takes to block a
-re-import. Re-push before treating it as one.
+**The device database is disposable until cutover, and may be reset at any time
+without asking.** Stated by the user on 2026-08-13. Everything on the phone is
+rebuildable: `db/for-device.sqlite` comes from `npm run import` over
+`Examples/`, so a reset costs one push and loses nothing that is not
+reproducible. Do not treat a phone full of test sets as a thing to preserve, and
+do not carry status lines about it in this document - they go stale within the
+hour and this paragraph replaced two that had.
 
-Re-pushing is how the device is reset after testing, and it is not optional:
-logging test sets writes real `source = 'native'` rows, and **one of those
-permanently blocks a re-import**. Stage 3's verification left an in-progress
-session with test sets on the phone for four days because this was skipped.
+**This inverts at cutover.** Once the real logging starts, the device holds the
+only copy of everything logged natively, and `npm run import` already refuses to
+run the moment any `sets.source = 'native'` row exists. Cutover is one-way. The
+synced-folder export in stage 15 is what has to exist before that line is
+crossed.
+
+Reset with the push above. Verify by opening the app: Home with no in-progress
+session, both templates showing `not done yet`.
 
 The phone previously carried a **340-session** lineage rather than the canonical
 339. A pre-0003 snapshot had been pushed back deliberately so the device's own
