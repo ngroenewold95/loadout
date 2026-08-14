@@ -65,6 +65,27 @@ public class RestTimerService extends Service {
     private long totalMs;
     private boolean vibrationFired;
 
+    /**
+     * The running timer, readable without binding to the service.
+     *
+     * The JS side keeps its countdown in React state, so killing the app loses
+     * it while the service carries on counting - reopen mid-rest and the app bar
+     * showed nothing while the bubble was still going. `RestTimerPlugin.state()`
+     * reads these on mount to recover it.
+     *
+     * Static, and volatile because the plugin reads them from the WebView thread
+     * while the service writes them on the main thread. This mirrors
+     * `MainActivity.isForeground`, which the service reads the same way for the
+     * same reason: binding to a service to ask it one number is a lot of
+     * lifecycle for a long.
+     *
+     * Zero means no timer. Nothing persists these deliberately: if the process
+     * is gone the service is gone, and a stale end time recovered from disk
+     * would be worse than none.
+     */
+    static volatile long sEndsAt;
+    static volatile long sTotalMs;
+
     /** Redraws the bubble. Deliberately does NOT drive the haptics. */
     private final Runnable tick = new Runnable() {
         @Override
@@ -129,6 +150,7 @@ public class RestTimerService extends Service {
             long by = intent.getLongExtra(EXTRA_EXTEND_MS, 30_000);
             endsAt += by;
             totalMs += by;
+            publishState();
             // Extending pushes zero back out, so stop any buzz already running
             // and re-arm for the new end time.
             cancelVibration();
@@ -141,6 +163,7 @@ public class RestTimerService extends Service {
         if (intent != null && intent.hasExtra(EXTRA_ENDS_AT)) {
             endsAt = intent.getLongExtra(EXTRA_ENDS_AT, System.currentTimeMillis());
             totalMs = intent.getLongExtra(EXTRA_TOTAL_MS, 1);
+            publishState();
             scheduleVibration();
         }
 
@@ -326,10 +349,19 @@ public class RestTimerService extends Service {
         if (v != null) v.cancel();
     }
 
+    /** Mirror the running timer where the plugin can read it. */
+    private void publishState() {
+        sEndsAt = endsAt;
+        sTotalMs = totalMs;
+    }
+
     private void stopTimer() {
         handler.removeCallbacks(tick);
         cancelVibration();
         removeOverlay();
+        endsAt = 0;
+        totalMs = 0;
+        publishState();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -339,6 +371,11 @@ public class RestTimerService extends Service {
         handler.removeCallbacks(tick);
         cancelVibration();
         removeOverlay();
+        // Cleared here as well as in stopTimer: the service can go away without
+        // being asked to (killed for memory), and a leftover end time would have
+        // the app bar counting down against a timer that no longer exists.
+        sEndsAt = 0;
+        sTotalMs = 0;
         super.onDestroy();
     }
 

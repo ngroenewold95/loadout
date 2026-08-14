@@ -25,12 +25,40 @@ interface WorkoutState {
   index: number
   /** Move the pager, recording which session the position belongs to. */
   setIndex: (sessionId: number, index: number) => void
+
+  /**
+   * Absolute instant the current rest ends, or null when nothing is resting.
+   *
+   * Here rather than in `ActiveSession` because the pill that renders it lives
+   * in `AppHeader`, which the shell renders ABOVE the logging screen. Absolute
+   * rather than a remaining duration, for the reason the native side already
+   * works this way: the bubble, the notification and this all draw from the same
+   * instant, so they cannot disagree, and none of them needs the app to have
+   * been awake.
+   */
+  restEndsAt: number | null
+  /** The rest's full length, for the draining fill. */
+  restTotalMs: number
+  startRest: (endsAt: number, totalMs: number) => void
+  extendRest: (ms: number) => void
+  clearRest: () => void
 }
 
 export const useWorkout = create<WorkoutState>((set) => ({
   sessionId: null,
   index: 0,
   setIndex: (sessionId, index) => set({ sessionId, index }),
+
+  restEndsAt: null,
+  restTotalMs: 0,
+  startRest: (endsAt, totalMs) => set({ restEndsAt: endsAt, restTotalMs: totalMs }),
+  extendRest: (ms) =>
+    set((s) =>
+      s.restEndsAt == null
+        ? s
+        : { restEndsAt: s.restEndsAt + ms, restTotalMs: s.restTotalMs + ms },
+    ),
+  clearRest: () => set({ restEndsAt: null, restTotalMs: 0 }),
 }))
 
 /** The pager position for `sessionId`, or 0 for any other session. */

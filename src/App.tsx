@@ -6,6 +6,7 @@ import { AppHeader } from './ui/AppHeader'
 import { Home } from './ui/Home'
 import { SessionSummary } from './ui/SessionSummary'
 import { SessionExercisePicker } from './ui/ExercisePicker'
+import { RestPill } from './ui/RestPill'
 import { DbSmoke } from './ui/DbSmoke'
 import { TimerSpike } from './ui/TimerSpike'
 
@@ -43,7 +44,12 @@ function Shell() {
       <AppHeader
         title={screen ? SCREEN_TITLES[screen.kind] : undefined}
         right={
-          screen ? undefined : (
+          // The rest pill outranks everything else in this slot: it belongs to
+          // the workout, not to the screen, and it has to stay visible when a
+          // pushed screen is covering the logging loop.
+          session ? (
+            <RestPill />
+          ) : screen ? undefined : (
             <button className="text-muted text-xs" onClick={() => push({ kind: 'spikes' })}>
               debug
             </button>

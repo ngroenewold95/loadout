@@ -61,6 +61,27 @@ public class RestTimerPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * The running timer, if there is one.
+     *
+     * Read on mount so a cold start recovers the countdown. The JS side holds
+     * `endsAt` in memory, so killing the app used to lose the in-app countdown
+     * while the service kept counting and the bubble kept drawing.
+     *
+     * Reads the service's static fields rather than binding to it: this is one
+     * long, and a bind/unbind dance around it would be far more lifecycle than
+     * the question deserves.
+     */
+    @PluginMethod
+    public void state(PluginCall call) {
+        long endsAt = RestTimerService.sEndsAt;
+        JSObject result = new JSObject();
+        result.put("running", endsAt > 0);
+        result.put("endsAt", endsAt);
+        result.put("totalMs", RestTimerService.sTotalMs);
+        call.resolve(result);
+    }
+
     // ------------------------------------------------------------ permissions
 
     private boolean canDrawOverlays() {

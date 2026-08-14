@@ -69,7 +69,6 @@ import { startRest } from '../native/restTimer.ts'
 import { EntryField } from './EntryField.tsx'
 import { HistoryCard } from './HistoryCard.tsx'
 import { MuscleBadge } from './MuscleBadge.tsx'
-import { RestBar } from './RestBar.tsx'
 
 interface Props {
   session: SessionRow
@@ -106,7 +105,9 @@ export function ActiveSession({ session }: Props) {
     [session.id],
   )
   const pagerRef = useRef<HTMLDivElement>(null)
-  const [restEndsAt, setRestEndsAt] = useState<number | null>(null)
+  // The rest lives in the store, not here: the pill that renders it sits in the
+  // app bar, which is above this screen and outlives it.
+  const startRestTimer = useWorkout((s) => s.startRest)
   /** The set the entry bar is pointed at, or null when it is entering a new one. */
   const [editingSetId, setEditingSetId] = useState<number | null>(null)
 
@@ -265,7 +266,9 @@ export function ActiveSession({ session }: Props) {
       baseWeightKg: current.baseWeightKg,
     })
     // Rest starts as a consequence of logging, never as its own tap.
-    if (current.restS) setRestEndsAt(await startRest(current.restS))
+    if (current.restS) {
+      startRestTimer(await startRest(current.restS), current.restS * 1000)
+    }
 
     /**
      * Auto-advance, but only on the set that completes the exercise.
@@ -350,12 +353,6 @@ export function ActiveSession({ session }: Props) {
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Region 1: pinned. Navigation and the answer to "where am I". */}
       <div className="shrink-0">
-        <RestBar
-          endsAt={restEndsAt}
-          onExtend={(ms) => setRestEndsAt((e) => (e == null ? e : e + ms))}
-          onSkip={() => setRestEndsAt(null)}
-        />
-
         <div className="flex items-center justify-between gap-3 px-5 pt-3">
           <div className="flex min-w-0 items-center gap-2">
             <MuscleBadge primaryMuscle={current.primaryMuscle} />
