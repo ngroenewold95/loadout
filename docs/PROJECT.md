@@ -61,19 +61,30 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   handles, all four taps and five drags re-measured. See below.
 - **Pre-created set slots, verified on device** - sets listed before they are
   performed, any of them correctable or deletable in the entry bar. See below.
-- 161 tests passing, typecheck and lint clean
+- **Swipe pager and aligned history, verified on device** - one page per
+  exercise, three past sessions stacked as cards, and the row matching the set
+  you are about to do is lit. See below.
+- **Auto-advance and the summary screen, verified on device.** See below.
+- **Session plan snapshot, picker and a real `Add set`, verified on device** -
+  migration 0005, and a workout can now be edited without touching the
+  programme. See below.
+- **Rest timer as an app-bar pill, verified on device**, including recovering
+  the countdown after the WebView was destroyed mid-rest. See below.
+- **A browser dev seed**, so `npm run dev` opens with fabricated history instead
+  of an empty database. See below.
+- 198 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
 UI stages below consume them:
 
 - `platesFor` in `src/logic/plates.ts` - the inventory-aware plate solver
-- `updateSet` / `deleteSet`, and `recentPerformance` widened to three sessions
 - `app_settings` and `plate_inventory` tables, both **empty**
 - `exercises.loading` and `exercises.default_increment_kg`, both **null for all
   87 rows**, so plate chips stay dormant until they are populated
 
-Not built yet: the UI stages 7-14 below, exercise picker, exercise library,
-template editor, the synced-folder export.
+Not built yet: stages 11-16 below - the exercise library and detail screen, the
+template editor, plate chips, the settings that matter in a gym, and the
+synced-folder export.
 
 ---
 
@@ -126,6 +137,12 @@ what Progression was actually running. The `.pgnbkp` backup made that check
 possible and it failed - see the correction below. `npm run analyze:backup`
 prints the live programme, and that print is now the thing `plan.ts` must
 agree with.
+
+**`Examples/Plan.md` was then rewritten from `plan.ts`**, so the written plan
+and the app now say the same thing and the document says outright that it
+follows the app. It carries the per-exercise rests, marked measured for Day B and
+inferred for Day A, rather than the three bands it used to state and the app
+never used.
 
 - **Two days, A/B rolling** - explicitly *not* pinned to weekdays. `nextTemplate`
   picks whichever template was performed least recently, so a missed week
@@ -228,7 +245,7 @@ confirmed by screenshot at every step:
 | Opening an exercise | Target `2 × 5-8`, rest `4:00`, and **last time · 2026-07-19 · 355 × 8  355 × 8** on screen permanently |
 | Prefill | 355 lb × 8 already in the fields - logging set 1 is **one tap** |
 | LOG SET | Set recorded, and `RestTimerService` starts as a *side effect* - confirmed in `dumpsys`, never a separate tap |
-| Rest | In-app bar counts down with `+30s` / `Skip`; the overlay bubble stays hidden while the app is in front |
+| Rest | Counts down in the app while the overlay bubble stays hidden. **Now the app-bar pill**, not the bar this row described. |
 | Progression | After two sets at the top of the range: **"Top of the range on every set - add load next time."** |
 | Resume | Cold start returns straight into the in-progress session |
 
@@ -322,7 +339,8 @@ Two rules the measurements confirm:
   puts a Cut/Copy/Select-all bar over the content while the selection lives; it
   disappears on the first keystroke, so it costs nothing during entry.
 - The exercise strip moved into the pinned header. Navigation you have to
-  scroll to reach is not navigation. **Stage 7** replaces it with a pager anyway.
+  scroll to reach is not navigation. **Stage 7 has since replaced it** with a
+  pager, leaving the strip as badges only.
 - `Undo last set` moved next to the set chips it removes and lost the word
   "last set". **Stage 6 deleted it outright**, as planned.
 
@@ -410,12 +428,173 @@ Ours lets extras just happen and the denominator never moves, which gives the
 self-contradictory `2/2` with a dashed slot hanging underneath. That was a known
 worry when the slot states were designed and it was called wrong.
 
-It was not fixed here because it cannot be: `targetSets` comes from
-`template_exercises`, so raising it would **edit the programme**, which is
+It was not fixed here because it could not be: `targetSets` came from
+`template_exercises`, so raising it would have **edited the programme**, which is
 exactly the fault `session_exercises` exists to fix. Holding the count in
 component state instead would give a planned set that vanishes on process death,
-and surviving process death is something this app already gets right. So the
-real `Add set` belongs to stage 9, listed there.
+and surviving process death is something this app already gets right.
+
+**Stage 9 has since delivered it**, and `2/2` above a dashed slot is gone. The
+trailing dashed slot remains for the honest case it was always right about: a set
+nobody planned, logged anyway.
+
+---
+
+## Swipe pager and aligned history - DONE
+
+Stage 7. The tap strip is gone: region 2 is now a scroll-snap pager holding one
+page per exercise, each with its own vertical scroller, so the three regions
+survive intact. `src/ui/HistoryCard.tsx` is the new piece.
+
+**The one detail worth the whole stage**, taken from `docs/PROGRESSION.md`:
+below today's slots sit up to three past sessions as numbered rows, and **the
+row matching the set you are about to do is lit**. Confirmed on device - on set
+1 the `1` badge is lit in every card; after logging set 1 the highlight moved to
+`2` in all three at once. `recentPerformance` had been widened to three sessions
+since the repo layer and only `[0]` was ever read; this is what reads the rest.
+
+### Measured on device
+
+| | |
+|---|---|
+| Swipe left | 2/10 -> 3/10, header, badges and entry bar all follow |
+| Three cards | `2026-07-19 · 25 days ago`, `2026-06-30 · 44 days ago`, `2026-06-24 · 2 months ago` |
+| Log a set | the lit history row moved from `1` to `2` in every card |
+| **Left-edge swipe** | **exits to the launcher** - `NexusLauncherActivity` |
+
+**The pager does NOT swallow the system back gesture**, which was the open
+question this stage carried. The edge swipe went to the system, so no
+`systemGestureExclusionRects` and no native change were needed. Recorded because
+the opposite result would have meant native work.
+
+### What is left of the strip
+
+Badges only, no names. The strip was 11 text chips asking for an accurate tap
+while the layout moved; the pager is how you move between exercises now, so the
+strip is a position indicator first. It stays tappable because swiping from
+exercise 1 to exercise 9 is eight gestures and one tap. A `+` at its end opens
+the picker.
+
+**Known rough edge:** with 10 exercises the `+` is off the right of the strip and
+has to be scrolled to.
+
+### Two things the implementation had to get right
+
+- **The observer must not fight the index.** Sync comes from an
+  `IntersectionObserver` rather than a scroll handler, so the header does not
+  flicker mid-swipe. There is no "is this programmatic" flag: the effect that
+  scrolls the pager checks the position first, so when the observer set the
+  index because the user swiped there, nothing is issued.
+- **The pager is positioned in a LAYOUT effect, before the observer registers.**
+  Otherwise the observer fires against page 0 on mount and resets the restored
+  index - a real race, not a hypothetical one, since the index is now restored
+  from a store.
+
+---
+
+## Auto-advance and the summary - DONE
+
+Stage 8. Logging the last set of an exercise moves to the **next incomplete**
+one, not `index + 1`, so going back to add a set does not trap you at the end.
+When nothing is incomplete, the summary opens instead.
+
+`Finish` no longer ends the session - it opens the summary. **The summary is not
+a save**: every set was written when it was logged, which is why the button says
+`Finish workout` and why backing out of the screen discards nothing.
+
+`nextIncompleteIndex` and `sessionTotals` are pure and tested.
+**`sessionTotals` excludes `load_mode = 'assistance'` from volume rather than
+adding it**: 420 imported sets record assistance, where a higher number is an
+*easier* set, so summing them would make progress read as decline. The set is
+still counted; only the volume leaves it out.
+
+**`Discard workout` confirms with a second tap on the same button**, not a
+dialog. There is still no dialog primitive in the codebase and stage 6 already
+turned down building one to be used once.
+
+### Measured on device
+
+| Step | Measured |
+|---|---|
+| Log the set that completes an exercise | advanced 1/10 -> 2/10, pager scrolled, first badge dimmed, prefilled 130 lb from that exercise's own history |
+| `Finish` | summary: `Day A - Trap Bar`, `2026-08-13 · today`, duration `7:39`, sets `2`, volume `5680 lb` |
+| Volume check | 355 lb × 8 × 2 sets = 5,680 lb exactly |
+| Duration | live - `7:39` on open, `8:42` a minute later |
+| `Discard workout` | first tap relabels it `Tap again to discard` |
+
+### What this shook out: a pushed screen resets the screen below it
+
+`nav.ts` recorded that a pushed screen unmounts the one below it and flagged the
+first push from inside a live workout as where that had to be reconsidered. It
+happened here, and it was visible: `Back to workout` returned to **exercise 1 of
+10** rather than the exercise being performed, because the pager index was
+`useState` inside `ActiveSession`.
+
+Fixed by moving the index into `src/state/workout.ts`, **scoped to a session
+id** so a stale index from yesterday cannot open a different template at
+whatever page that one ended on. Re-measured after the fix: at 3/10, `Finish`,
+`Back to workout`, still 3/10, with no visible scroll animation.
+
+The entry draft is still lost on a push. Nothing pushes from mid-entry yet, so
+this is recorded rather than solved.
+
+---
+
+## Session plan snapshot, picker, `Add set` - DONE
+
+Stage 9, and migration 0005. `ActiveSession` used to read its exercise list
+straight from `template_exercises`, so editing a workout in progress would have
+silently rewritten the programme. `session_exercises` is a copy taken by
+`startSession`, and every edit writes there.
+
+It is also what makes a real `Add set` possible: raising the target needs a
+per-session number to increment, which is exactly what stage 6 said it lacked.
+
+**Migration 0005 backfills the workout that was already in progress**, because
+`startSession` is what fills the table and that session started before the table
+existed. Only live sessions: nothing renders an exercise list for a finished one,
+so copying rows for all 343 would be work no query does. `rest_s` is resolved
+through the exercise default on copy, in both the migration and `startSession` -
+a snapshot storing null would re-resolve later against a changed default, which
+is the opposite of what a snapshot is for.
+
+### Measured on device
+
+| Step | Measured |
+|---|---|
+| After 0005 | **the screen is identical** - that is the pass condition for the read swap |
+| Backfill | 10 rows for session 340, right order, `target_sets` 2, `rest_s` resolved to 240 |
+| `Add set` | `2 × 5-8 · 2/2 sets` became `3 × 5-8 · 2/3 sets`, and the dashed extra slot became a planned one |
+| Again | `2/4`, with an `×` on the pending slot and none on the active one |
+| Tap the `×` | back to `2/3` |
+| Picker | 87 exercises by recency with real counts (`22 days ago · 249 sets`); anything already in the workout is dimmed and disabled |
+| Add | appended at `order_index` 10, no rep target, rest from the exercise's own default |
+| `Remove` on the exercise in view | 2/11 -> 2/10, list closed up, no crash - the index clamp working |
+
+**The self-contradictory `2/2` with a dashed slot hanging under it is gone**,
+which is the thing stage 6 called wrong and could not fix.
+
+### Decisions taken here
+
+- **The active slot cannot be un-planned.** It is where the next set lands, and
+  removing it would leave `LOG SET` with nowhere to put anything. Only a
+  *pending* unperformed slot carries the `×`.
+- **Lowering the target is clamped at the sets already performed**, or the header
+  would read `3/2`. The sets are facts; the target is only the intention.
+- **Removing an exercise keeps the sets already logged against it.** They were
+  performed, and a plan change is not a reason to lose a fact. The summary reads
+  `sets`, so they still appear there.
+- **Reorder rewrites the whole list from zero** rather than swapping two rows. A
+  pairwise swap has to read the neighbour first, and two racing would leave two
+  rows sharing an `order_index`.
+- **An added exercise gets no rep target**, so `setSlots` treats it as open and
+  it can never be wrongly declared complete. The consequence, which is a real
+  rough edge: it is never "complete", so **auto-advance keeps returning to it**
+  and only `Finish` ends the workout.
+
+**Not verified by tapping:** `Replace`, `Move earlier` and `Move later`. All
+three are covered by repo tests, but their UI paths were never exercised on the
+phone.
 
 ---
 
@@ -719,6 +898,8 @@ src/
     plan.ts         the current programme, as a SEED; shouldIncreaseLoad
     entry.ts        entry shapes, steppers, scrubSteps, keypad parsing
     slots.ts        the set rows an exercise shows, performed or not
+    session.ts      nextIncompleteIndex, sessionTotals (assistance excluded)
+    dates.ts        daysBetween, relativeDay - "17 days ago"
     plates.ts       inventory-aware plate solver; the `loading` axis
     muscles.ts      the eight groups and their colours; muscleBadge
     exerciseMuscles.ts  exact exercise name -> group, all 87
@@ -733,6 +914,7 @@ src/
     repo.ts         EVERY query the app makes
     seedPlan.ts     plan.ts -> templates tables, one transaction
     seedMuscles.ts  fills blank primary_muscle; only ever fills blanks
+    devSeed.ts      FABRICATED history, browser dev only, never the phone
     backup.ts       VACUUM INTO copy taken before device migrations
   Tests sit beside what they cover. Two carry their own weight:
     db/migrations.test.ts  migrates a database WITH ROWS IN IT - the only
@@ -744,13 +926,18 @@ src/
   state/
     queries.ts      TanStack Query over the repo; keys and invalidation
     nav.ts          the screen stack; back() reports whether it popped
+    workout.ts      pager index and rest, OUTSIDE the screen that renders them
   ui/
-    AppHeader.tsx   app bar; back arrow or the wordmark, never both
+    AppHeader.tsx   app bar; back arrow or the wordmark, and the rest pill
     Home.tsx        next-up template, start a workout
-    ActiveSession.tsx  THE LOGGING LOOP - header, scroller, docked entry bar
+    ActiveSession.tsx  THE LOGGING LOOP - header, pager, docked entry bar
+    ExercisePage    (in ActiveSession) one exercise: slots, then history cards
+    HistoryCard.tsx one past session, numbered rows, active row lit
+    SessionSummary.tsx  what a workout added up to. NOT a save
+    ExercisePicker.tsx  87 exercises by recency; add, or swap one out
     EntryField.tsx  one number: step buttons that are also the drag handle,
                     and the number itself as the keypad
-    RestBar.tsx     in-app countdown; red count-up past zero
+    RestPill.tsx    the app-bar countdown; draining fill, red past zero
     MuscleBadge.tsx the coloured identity circle, header and strip
     TimerSpike.tsx  throwaway harness for the timer - behind `debug`
     DbSmoke.tsx     throwaway on-device check of the db layer - same
@@ -776,11 +963,11 @@ db/                 gitignored - rebuildable until cutover
 ## Dev loop
 
 ```bash
-npm run dev          # Vite dev server
+npm run dev          # Vite dev server; seeds FABRICATED history if empty
 npm run build        # tsc -b && vite build
-npm run test         # vitest (161 tests)
+npm run test         # vitest (198 tests)
 npm run lint         # oxlint
-npm run import       # rebuild db/ from the CSV; refuses after cutover
+npm run import       # rebuild db/ from the NEWEST Examples/*.csv; refuses after cutover
 npm run profile      # profile any CSV's structure
 npm run analyze:backup  # read the .pgnbkp app backup; --all for archived plans
 npm run db:generate  # drizzle-kit generate + add STRICT
@@ -1063,6 +1250,34 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
 - **Module side effects bite.** `scripts/migrate.ts` ran a migration merely by
   being imported, holding the DB open and causing `EBUSY` on delete. CLI entry
   points are now guarded with `import.meta.url === pathToFileURL(argv[1]).href`.
+- **A "stale Vite glob dropped migration 0005 from the bundle" was reported
+  here, and it never happened.** The device logged `schema up to date` after
+  0005 was generated, a grep of `dist/` appeared to show the new table name
+  missing, and the conclusion drawn was that `import.meta.glob` had been cached.
+  It had not. Clearing `node_modules/.vite` and rebuilding produced a bundle with
+  an **identical content hash**, which is proof the migration had been in it all
+  along; the grep was faulty. The real explanation is duller: 0005 applied on the
+  first launch, and the `schema up to date` line came from a second WebView
+  context. The database confirmed it - migration recorded, table present,
+  backfill correct. The guard written during the false alarm was kept, because a
+  bundle silently missing a migration is a genuinely bad failure that nothing
+  else here could see, but **its comment now says it is a precaution rather than
+  a post-mortem**. The lesson is the one this file keeps relearning: a
+  measurement that has not been checked is a guess, and a guess written in this
+  document is worse than no entry at all.
+- **`am kill` cannot reproduce a mid-rest cold start.** The rest-timer foreground
+  service is exactly what keeps the process alive, so the kill is a no-op
+  precisely when a rest is running - the case worth testing. Force the activity
+  to be destroyed instead (`settings put global always_finish_activities 1`),
+  which loses the JS context while the service keeps counting.
+- **A pushed screen resetting the screen below it is not hypothetical.** `nav.ts`
+  flagged it; opening the summary and coming back landed on exercise 1 of 10.
+  State that must survive a push now lives in `state/workout.ts`.
+- **`npm run import` had the export filename hard-coded.** It happened to be the
+  newest one, so nothing was wrong - but a fresh export would have been ignored
+  while the reconciliation still reported OK against the older file. It now takes
+  the newest `Examples/*.csv`, and Progression's `YYYY-MM-DD_HH-MM-SS` naming
+  makes lexicographic order chronological, so no date parsing is involved.
 
 ---
 
@@ -1103,7 +1318,7 @@ chip does not work here, and the reference app does not use it either.
 | Last 5 seconds | Five full-strength pulses, one per second |
 | At zero | One long 900 ms buzz |
 | After zero | Turns **red** and counts **up** (`+0:39`) rather than vanishing |
-| Bubble visibility | **Only when loadout is not in front.** In-app, the active-workout header will own the countdown. |
+| Bubble visibility | **Only when loadout is not in front.** In-app, the app-bar pill owns the countdown. |
 | Controls | `+30s` / `Skip` notification actions; drag and tap-to-open on the bubble |
 | Starting | Automatic on `LOG SET` from `default_rest_s`. Never a separate tap. |
 
@@ -1136,6 +1351,56 @@ bubble; leave again → bubble; Skip → gone. Haptics confirmed correct by feel
 
 **Still unverified:** whether the waveform plays with the screen off and pocketed.
 
+### The in-app face is a pill in the app bar - DONE
+
+Stage 10. `RestBar.tsx` is **deleted**. It was a full-width bar that pushed the
+content down about 190 px when it appeared; the pill costs no vertical space and
+cannot shift the layout, which is the whole point on a screen designed so that
+nothing moves under a thumb.
+
+It lives in `AppHeader`'s right slot, so rest state had to move out of
+`ActiveSession` into `src/state/workout.ts` - the header is rendered by the shell,
+above the logging screen, and stays up when a pushed screen covers it.
+
+`--color-rest` (#0058e6) and `--color-rest-over` (#971e1e) were sampled off the
+reference app when the palette was built and had been defined and unused ever
+since. This is what they were for.
+
+**The cold-start gap is fixed.** `restEndsAt` was React state, so an app whose
+WebView went away lost the countdown while the service kept counting.
+`RestTimerPlugin.state()` now returns the service's own `endsAt`, read on mount.
+The service exposes it as **static fields**, following the `MainActivity
+.isForeground` precedent - binding to a service to ask it one long is more
+lifecycle than the question deserves. Nothing is persisted: if the process is
+gone the service is gone, and a stale end time read back from disk would be
+worse than none.
+
+#### Measured on device
+
+| Step | Measured |
+|---|---|
+| Idle | plain alarm outline in the app bar |
+| Counting down | blue pill, alarm icon and `3:57`, fill draining right to left |
+| Layout | header does not move when a rest starts - see the correction below |
+| Recovery | activity destroyed mid-rest, reopened: pill back at **3:08**, fill correctly drained to about 78% |
+
+**`am kill` cannot produce this failure**, which is worth knowing before trying:
+the rest-timer foreground service is precisely what keeps the process alive, so
+the kill is a no-op exactly when a rest is running. Forcing the activity to be
+destroyed instead (`settings put global always_finish_activities 1`, background,
+return) loses the JS context while the service carries on, which is the faithful
+version of it. Restore the setting to `0` afterwards.
+
+**Not verified this session:** the red count-up past zero, which needs a
+four-minute wait. It is the same `over` branch that `RestBar` rendered correctly
+before, and the native bubble does its own count-up independently.
+
+**A correction found by measuring:** the first version left a bare icon in the
+idle slot, and the exercise header still moved about 11 device px when a rest
+started, because the icon was shorter than the pill replacing it. The idle state
+now matches the pill's height exactly. A smaller version of the bug this stage
+exists to kill is still that bug.
+
 ---
 
 ## Next steps
@@ -1147,9 +1412,15 @@ mid-workout exercise editing and an exercise library. The ordering principle
 chosen was **workout flow first**: one workout has to feel right end to end
 before the app grows more screens.
 
-Stages 0 to 6 are **done and verified on device**: the pre-migration backup, the
+Stages 0 to 10 are **done and verified on device**: the pre-migration backup, the
 palette, all the pure logic, repo and schema groundwork, the docked entry bar,
-the navigation shell, weight beside reps, and pre-created set slots.
+the navigation shell, weight beside reps, pre-created set slots, the swipe pager
+and aligned history, auto-advance and the summary, the session plan snapshot with
+the picker and a real `Add set`, and the rest timer as an app-bar pill.
+
+**A workout now runs end to end**: start it, swipe between exercises, log against
+five years of history, correct anything, add or cut exercises and sets, and
+finish on a summary that says what it came to.
 
 Each stage is independently shippable. Prove each on the phone before starting
 the next - screenshot before every tap.
@@ -1158,41 +1429,19 @@ the next - screenshot before every tap.
    device** - see "Entry bar, weight beside reps" above for the measurements.
 6. ~~**Pre-created set slots.**~~ **Done and verified on device** - see "Set
    slots" above.
-7. **Swipe pager and aligned history.** Replace the tap strip with a CSS
-   scroll-snap pager (`snap-x snap-mandatory`, no new dependency), syncing the
-   index from an `IntersectionObserver` rather than a scroll handler. Keep a
-   slim `3/11` in the header so position is never ambiguous. Render one card per
-   session from the widened `recentPerformance`, and **highlight the row whose
-   index matches the active slot** - the single highest-value detail found in
-   the investigation. Watch for the pager fighting the system edge-swipe back
-   gesture, which now has a real consumer.
-8. **Auto-advance, and the summary screen.** Logging the last set of an exercise
-   moves to the **next incomplete** exercise, not simply `index + 1`, so going
-   back to add a set does not trap you at the end. When every exercise is
-   complete, go to the summary instead. `Finish` and back both route there.
-   **The summary is not a save.** Sets are written as they are logged, so the
-   button says `Finish workout` and never implies that backing out discards
-   anything. It carries duration, set count, volume, and `Back to workout` /
-   `Discard workout` beside it.
-9. **Session plan snapshot, picker, swap / cut / add.** `ActiveSession` reads
-   its exercise list straight from the template today, so editing a workout in
-   progress would silently rewrite the programme. **Migration 0005 adds
-   `session_exercises`**, copied from the template by `startSession`. Land the
-   behaviour-neutral read swap first and prove it on device, then the picker
-   (`searchExercises` is written, tested and ordered by recency), then add,
-   remove, reorder and `Replace`. Soft deletes only. Templates are untouched;
-   the one route back to a template is an explicit action on the summary.
-   **Also the real `Add set`**, which belongs here and nowhere earlier: a row
-   below the slots that raises this session's `target_sets` so `2/2` becomes
-   `2/3`, with `Delete` on an unperformed slot to undo it. It needs a
-   per-session row to increment, which is what this stage creates. Stage 6's
-   trailing dashed slot is the stand-in until then.
-10. **Rest timer as an app-bar pill**, replacing `RestBar.tsx`: draining fill
-    while counting down, solid red counting up past zero, tap to skip. **Fix the
-    cold-start gap here** - `restEndsAt` is React state, so a killed app loses
-    the in-app countdown while the service keeps counting. Add a `state()`
-    method to `RestTimerPlugin` returning the service's `endsAt` and read it on
-    mount; the service already holds the value, so nothing needs persisting.
+7. ~~**Swipe pager and aligned history.**~~ **Done and verified on device** -
+   see "Swipe pager and aligned history" above. The open question it carried is
+   answered: the pager does **not** fight the system edge-swipe back.
+8. ~~**Auto-advance, and the summary screen.**~~ **Done and verified on
+   device** - see "Auto-advance and the summary" above.
+9. ~~**Session plan snapshot, picker, swap / cut / add**, and the real
+   `Add set`.~~ **Done and verified on device** - migration 0005; see "Session
+   plan snapshot, picker, `Add set`" above. `Replace`, `Move earlier` and
+   `Move later` are tested at the repo layer but were never tapped on the phone.
+10. ~~**Rest timer as an app-bar pill**, and the cold-start gap.~~ **Done and
+    verified on device** - see "The in-app face is a pill in the app bar" above.
+    `RestBar.tsx` is deleted. The red count-up past zero was not re-verified on
+    device this time.
 11. **Exercise library and exercise detail.** Guidance ships as a static table
     keyed by exact exercise name, exactly like `logic/exerciseMuscles.ts`,
     seeded into the database by a **fill-blanks** seeder like `seedMuscles.ts`
@@ -1236,10 +1485,11 @@ Then, still blocking cutover:
       counts on device, then stop re-importing forever. `npm run import` already
       refuses once any `sets.source = 'native'` row exists.
 16. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
-    plus the `debug` screen in `App.tsx`, once the logging loop owns the timer
-    and the database. `DbSmoke` still earns its place until stage 10, since it
-    is the only on-device proof of the window functions `recentPerformance`
-    needs.
+    plus the `debug` screen in `App.tsx`. `DbSmoke` is still the only on-device
+    proof of the `DENSE_RANK` window function `recentPerformance` depends on, so
+    it earns its place until that is retired or proved another way. The `debug`
+    link is still in the header and is reachable in a demo; hiding it is cheap
+    and can happen before the files are deleted.
 
 ### Not blocking cutover
 
@@ -1248,8 +1498,22 @@ Then, still blocking cutover:
 - Progress and statistics views. Stage 11 gives one exercise its full history,
   which is the first thing to read the five years back at all, but there is
   still nothing that looks across exercises or over time.
-- `npm run dev` in the browser runs against an empty jeep-sqlite database. Some
-  seed path would make UI work possible without a phone attached.
+- ~~`npm run dev` runs against an empty jeep-sqlite database.~~ **Done.**
+  `src/db/devSeed.ts` writes fabricated sessions into an empty web database on
+  first load. Three guards keep it away from real data: **web only** and **dev
+  only**, both in `open.ts`, and **empty only**, inside the seeder. The two in
+  `open.ts` are written out rather than imported from the seeder module on
+  purpose - importing anything from it statically defeats the dynamic import
+  that keeps the fabricated data out of the device bundle, and the bundler says
+  so out loud (`INEFFECTIVE_DYNAMIC_IMPORT`). In a production build
+  `import.meta.env.DEV` folds to false and the whole branch is eliminated, so
+  the seed is not merely unreachable on the phone, it is **absent**.
+  **The data is invented and must stay invented** - nothing in it may come from
+  `Examples/`, which holds the only copy of the real export and its medical
+  notes. Exercise names come from `plan.ts`, which is committed.
+- **Home is still two template buttons.** The database holds 343 sessions and
+  6,206 sets and no screen shows any of it, which is the first thing anyone
+  opening the app sees.
 
 ### Phase-1 details already settled
 
