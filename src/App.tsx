@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useActiveSession } from './state/queries.ts'
 import { useCurrentScreen, useNav, useSystemBack, type Screen } from './state/nav.ts'
@@ -55,9 +56,17 @@ function Shell() {
           session ? (
             <RestPill />
           ) : screen ? undefined : (
-            <button className="text-muted text-xs" onClick={() => push({ kind: 'spikes' })}>
-              debug
-            </button>
+            /**
+             * The way into the spikes, and deliberately not a labelled button.
+             *
+             * `DbSmoke` is still the only on-device proof that the device's
+             * SQLite has the `DENSE_RANK` window function `recentPerformance`
+             * depends on, so the spikes earn their place until that is retired.
+             * But a visible `debug` link in the app bar is the first thing
+             * anyone shown the app reads, so it is now the wordmark's own
+             * corner: five taps on the invisible target opens it.
+             */
+            <DebugTap onOpen={() => push({ kind: 'spikes' })} />
           )
         }
       />
@@ -105,6 +114,30 @@ function Shell() {
         )}
       </main>
     </div>
+  )
+}
+
+/**
+ * Five taps in the corner of the app bar opens the spikes.
+ *
+ * The count resets on unmount, and there is no feedback until it fires: this is
+ * a way back in for whoever is building the thing, not a feature. Android's own
+ * build-number tap is the same shape, so it is at least a familiar secret.
+ */
+function DebugTap({ onOpen }: { onOpen: () => void }) {
+  const taps = useRef(0)
+  return (
+    <button
+      aria-hidden="true"
+      tabIndex={-1}
+      className="size-tap"
+      onClick={() => {
+        taps.current += 1
+        if (taps.current < 5) return
+        taps.current = 0
+        onOpen()
+      }}
+    />
   )
 }
 

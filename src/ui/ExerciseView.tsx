@@ -332,6 +332,30 @@ export function ExerciseView({ session, openAt }: Props) {
   }, [current, sets, lastTime, session.id, setDraft, draft])
 
   /**
+   * Load a past set's numbers into the entry bar.
+   *
+   * It does NOT aim the bar at that set - `editingSetId` stays null, so the
+   * button still says `LOG SET` and still creates a new set. A set performed in
+   * July is a fact and is not editable from here; what is being reused is the
+   * numbers, which is the whole question a history card is on screen to answer.
+   *
+   * Marked touched, so it survives a push and so the prefill chain does not
+   * immediately overwrite it with the answer it would have given anyway.
+   */
+  const handlePickHistory = (set: PerformedSet) => {
+    if (!current) return
+    setDraft({
+      sessionId: session.id,
+      exerciseId: current.exerciseId,
+      weightKg: set.weightKg,
+      reps: set.reps,
+      durationS: set.durationS,
+      editingSetId: null,
+      touched: true,
+    })
+  }
+
+  /**
    * Point the bar at a set, or back at entering a new one.
    *
    * Tapping the slot already being corrected is its own cancel, and cancelling
@@ -526,13 +550,18 @@ export function ExerciseView({ session, openAt }: Props) {
             onPlanSets={(exerciseId, targetSets) =>
               planSets.mutate({ sessionId: session.id, exerciseId, targetSets })
             }
+            onPickHistory={handlePickHistory}
           />
         ))}
       </div>
 
       {/* Region 3: docked, and it never moves. */}
       <div className="bg-surface-1 pb-safe-b shrink-0">
-        <div className="flex flex-col gap-3 px-4 pt-3 pb-3">
+        {/* Tighter than it was, to give the workout more of the screen. What
+            does NOT move is the 48 px handle: that is Android's own minimum and
+            the row exists so two of them fit beside two numbers. The savings
+            come from padding and type size, which cost nothing to aim at. */}
+        <div className="flex flex-col gap-2 px-4 pt-2 pb-2">
           {/* Weight then reps, on ONE row, in the order they are spoken: "355
               for 8". Each field carries its own stacked handles, so the row
               needs nothing but a gap. A shape with only one field just gets a
@@ -597,7 +626,7 @@ export function ExerciseView({ session, openAt }: Props) {
           )}
 
           <button
-            className="bg-primary text-on-primary rounded-2xl py-5 text-xl font-semibold tracking-wide active:opacity-90 disabled:opacity-40"
+            className="bg-primary text-on-primary rounded-2xl py-4 text-lg font-semibold tracking-wide active:opacity-90 disabled:opacity-40"
             disabled={!canLog || busy}
             onClick={editingSetId == null ? handleLog : handleSave}
           >
@@ -627,6 +656,7 @@ function ExercisePage({
   disabled,
   onSelectSet,
   onPlanSets,
+  onPickHistory,
 }: {
   pageIndex: number
   planned: TemplateExerciseRow
@@ -639,6 +669,8 @@ function ExercisePage({
   onSelectSet: (setId: number) => void
   /** Raise or lower how many sets THIS session is asking for. */
   onPlanSets: (exerciseId: number, targetSets: number) => void
+  /** Reuse a past set's numbers. Loads the entry bar; logs nothing. */
+  onPickHistory: (set: PerformedSet) => void
 }) {
   const unit: Unit = planned.preferredUnit
   const done = useMemo(
@@ -741,6 +773,7 @@ function ExercisePage({
               unit={unit}
               activeIndex={activeIndex}
               describe={describeSet}
+              onPick={onPickHistory}
             />
           ))
         )}

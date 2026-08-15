@@ -12,6 +12,15 @@
  * Rows are separate elements rather than a joined string. HTML collapses runs of
  * whitespace, and `PROJECT.md` records what that looked like the first time:
  * `355 × 8   355 × 8` rendered as one unreadable line.
+ *
+ * **Tapping a row loads it into the entry bar**, without logging anything. The
+ * card answers "what did I do for this set last time" already; this is the
+ * shortest way to act on the answer, and it is how you get back to a weight you
+ * have not done since June without scrubbing to it.
+ *
+ * Today's own slots keep their meaning - a tap there aims the bar at that set to
+ * CORRECT it. The two never collide, because a past set cannot be corrected from
+ * here and a set from today is not in this card.
  */
 import type { PerformedSet } from '../db/repo.ts'
 import { relativeDay } from '../logic/dates.ts'
@@ -29,6 +38,8 @@ interface Props {
    */
   activeIndex: number | null
   describe: (set: PerformedSet, unit: Unit) => string
+  /** Load this set's numbers into the entry bar. Logs nothing. */
+  onPick: (set: PerformedSet) => void
 }
 
 export function HistoryCard({
@@ -38,6 +49,7 @@ export function HistoryCard({
   unit,
   activeIndex,
   describe,
+  onPick,
 }: Props) {
   return (
     <div className="bg-surface-1 rounded-xl p-3">
@@ -50,7 +62,14 @@ export function HistoryCard({
         {sets.map((set, i) => {
           const lit = i === activeIndex
           return (
-            <div key={set.id} className="flex items-center gap-3 text-sm">
+            <button
+              key={set.id}
+              type="button"
+              // Full width, so the target is the row rather than the text on it.
+              // These are read under a bar, one-handed.
+              onClick={() => onPick(set)}
+              className="active:bg-surface-3 -mx-1 flex items-center gap-3 rounded-lg px-1 py-1 text-left text-sm"
+            >
               <span
                 className={`flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
                   lit ? 'bg-primary text-on-primary' : 'bg-muted text-text-dim'
@@ -61,7 +80,7 @@ export function HistoryCard({
               <span className={`tabular-nums ${lit ? 'text-text' : 'text-text-dim'}`}>
                 {describe(set, unit)}
               </span>
-            </div>
+            </button>
           )
         })}
       </div>

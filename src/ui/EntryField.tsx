@@ -57,7 +57,7 @@ export function EntryField({ display, unit, stepLabel, onStep, parse, onParsed }
   }
 
   return (
-    <div className="bg-field flex min-w-0 flex-1 items-center gap-1 rounded-2xl p-1.5">
+    <div className="bg-field flex min-w-0 flex-1 items-center gap-1 rounded-2xl p-1">
       {/*
         A label, so the whole box left of the handles opens the keypad rather
         than only the glyphs themselves.
@@ -77,7 +77,7 @@ export function EntryField({ display, unit, stepLabel, onStep, parse, onParsed }
             autoComplete="off"
             placeholder="-"
             value={draft ?? display}
-            className={`min-w-0 flex-1 bg-transparent text-right text-3xl font-semibold tabular-nums outline-none select-text ${
+            className={`min-w-0 flex-1 bg-transparent text-right text-2xl font-semibold tabular-nums outline-none select-text ${
               parsed != null && !parsed.ok ? 'text-danger' : ''
             }`}
             // Selecting on focus makes the keypad replace rather than append,
@@ -98,7 +98,7 @@ export function EntryField({ display, unit, stepLabel, onStep, parse, onParsed }
             }}
           />
         ) : (
-          <span className="min-w-0 flex-1 text-right text-3xl font-semibold tabular-nums">
+          <span className="min-w-0 flex-1 text-right text-2xl font-semibold tabular-nums">
             {display}
           </span>
         )}

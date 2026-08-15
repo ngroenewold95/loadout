@@ -76,6 +76,8 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   back out to and jump from, Home no longer starts a session on a tap, and the
   exercise identity is a colour rail and the group's name rather than a
   lettered circle. See below.
+- **History rows load into the entry bar, and the rest pill has an editor**,
+  both verified on device. See below.
 - 208 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
@@ -86,7 +88,7 @@ UI stages below consume them:
 - `exercises.loading` and `exercises.default_increment_kg`, both **null for all
   87 rows**, so plate chips stay dormant until they are populated
 
-Not built yet: stages 11b-17 below - the exercise library and detail screen, the
+Not built yet: stages 12-17 below - the exercise library and detail screen, the
 template editor, plate chips, the settings that matter in a gym, and the
 synced-folder export.
 
@@ -781,6 +783,74 @@ clears it on unmount.
 | Menu on the **last** card | Sheet in the same place, fully visible, nothing scrolled |
 | Back with the menu open | Sheet closed, workout still on screen, `topResumedActivity` still loadout |
 | Rest past zero | Pill solid red, counting up - **`PROJECT.md` had this as never verified** |
+
+---
+
+## Entry bar and rest pill - DONE
+
+Stage 11b, three small things the phone asked for.
+
+**Tapping a history row loads it into the entry bar**, without logging anything
+and without aiming the bar at that set - the button still reads `LOG SET`. A set
+performed in July is a fact and is not editable from a card; what is being
+reused is the numbers, which is the whole question the card is on screen to
+answer. Today's own slots are unchanged: a tap there still aims the bar at that
+set to correct it, so the same gesture never has two meanings.
+
+**The rest pill's tap now depends on its state.** Counting down, it opens an
+editor: `Add 30 seconds`, `Take off 30 seconds`, `Skip the rest`. Past zero it
+**cancels**, which is the only thing left to want once the rest is over and the
+pill is only still there because it never auto-dismisses. The reference app
+skips on any tap; this differs deliberately, because a rest is a number you
+adjust far more often than one you abandon, and a rest lost to a mistimed tap
+cannot be recovered - the service has thrown it away.
+
+`RestTimer.start` does the shifting in both directions rather than `extend`: it
+takes an absolute end and a total, which is what the pill needs to keep its fill
+honest, and extending by a negative number would be the same arithmetic through
+a name that says the opposite. The end is clamped at `now`, so taking 30 s off a
+12-second rest lands on zero rather than creating a rest that was already over.
+
+**The entry bar is shorter.** Padding and type only - the 48 px handle does not
+move, being Android's own minimum and the reason two of them fit beside two
+numbers.
+
+### Measured on device
+
+| Step | Measured |
+|---|---|
+| Tap `90 × 8` in the 2026-07-22 card | Reps went 7 -> 8, weight unchanged at 90, button still `LOG SET` |
+| `Add 30 seconds`, three taps 1 s apart | `totalMs` 222000 -> 251000 -> 280000, `endsAt` +30055 ms then +30080 ms |
+| `Take off 30 seconds`, two taps | 219000 -> 188000, `endsAt` back 29946 ms |
+| Shorten past zero | The sheet **closes itself** and the pill goes red, counting up from 0:05 |
+| Tap the red pill | Rest cancelled, back to the idle alarm outline |
+| Entry bar, `uiautomator dump` | `+5` handle **129 x 129 device px** (49 CSS, above the 48 minimum); `LOG SET` **160 px** tall, `[42,2157]-[1039,2317]` |
+
+The `debug` link is gone from the app bar. The spikes are still reachable -
+`DbSmoke` is the only on-device proof of the `DENSE_RANK` window function - but
+by five taps on an unlabelled corner, the way Android's own build-number tap
+works, rather than by a word anyone shown the app reads first.
+
+### Two mistakes worth recording
+
+**The rest editor's arithmetic was reported broken and was not.** `Add 30
+seconds` appeared to run the clock *down*, 1:09 to 0:56 to 0:16. Every one of
+those readings came from a separate `adb` round trip over wifi, each costing
+several seconds, and they were compared as though they were instantaneous. Three
+taps issued in a **single** `adb shell` invocation showed +30055 ms and +30080 ms,
+which is correct. The lesson is the one this file keeps relearning, in a new
+place: a measurement whose timing has not been controlled is not a measurement.
+
+**What the same episode did find** is real, and is fixed: the sheet stayed open
+when the rest passed zero, so it offered adjustments on an expired rest and its
+title read `0:24 LEFT` for a rest that had finished 24 seconds earlier - the
+pill's `Math.abs` display being shared with it. It now closes itself at zero.
+
+**A mis-tap came back, from chaining blind taps.** Several `input tap` calls were
+issued in one command without a screenshot between them; the first opened a
+sheet, and the rest landed on `Skip the rest` and then on the weight field,
+opening the keypad. `PROJECT.md` has recorded "screenshot before every tap" since
+the first device session and it is not decoration.
 
 ---
 
@@ -1555,12 +1625,13 @@ moved the list, Home starting a workout by accident - and the ordering principle
 above says workout flow comes first, so they became stage 11 and the exercise
 library moved back. The stage numbers below are the new ones.
 
-Stages 0 to 11a are **done and verified on device**: the pre-migration backup,
+Stages 0 to 11b are **done and verified on device**: the pre-migration backup,
 the palette, all the pure logic, repo and schema groundwork, the docked entry
 bar, the navigation shell, weight beside reps, pre-created set slots, the swipe
 pager and aligned history, auto-advance and the summary, the session plan
 snapshot with the picker and a real `Add set`, the rest timer as an app-bar
-pill, and the workout overview with the new exercise identity.
+pill, the workout overview with the new exercise identity, and the entry bar
+ and rest-pill changes.
 
 **A workout now runs end to end**: open a template without starting it, start
 it, jump between exercises from the list or swipe between neighbours, log
@@ -1590,15 +1661,12 @@ the next - screenshot before every tap.
 11a. ~~**Workout overview, the exercise identity, and the logging-screen
     notes.**~~ **Done and verified on device** - see "Workout overview" and
     "Exercise identity" above.
-11b. **The entry bar and the rest pill.** Tapping a history row loads that set's
-    weight and reps into the entry fields without logging anything. The rest
-    pill gains an editor: tap while counting down for `−30` / `+30` on the
-    running clock, tap while **red** to cancel, which is the only state where
-    killing the timer is what the tap means. No stopwatch. The entry bar takes
-    less height, so the workout gets more of the screen -
-    **re-measure the taps and drags afterwards**, since `SCRUB_PX_PER_STEP` is
-    in CSS pixels and any geometry change can break a correct measurement. Hide
-    the `debug` link while here; it is cheap and it is reachable in a demo.
+11b. ~~**The entry bar and the rest pill.**~~ **Done and verified on device** -
+    see "Entry bar and rest pill" above. **The scrub was not re-measured after
+    the entry bar shrank**, which is the one thing this stage owes: only padding
+    and type size changed and `SCRUB_PX_PER_STEP` is untouched, so the drags
+    should be unaffected, but that is reasoning rather than a measurement and
+    the last four taps and two drags on record predate the change.
 12. **Exercise library and exercise detail.** Guidance ships as a static table
     keyed by exact exercise name, exactly like `logic/exerciseMuscles.ts`,
     seeded into the database by a **fill-blanks** seeder like `seedMuscles.ts`
@@ -1644,9 +1712,10 @@ Then, still blocking cutover:
 17. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
     plus the `debug` screen in `App.tsx`. `DbSmoke` is still the only on-device
     proof of the `DENSE_RANK` window function `recentPerformance` depends on, so
-    it earns its place until that is retired or proved another way. The `debug`
-    link is still in the header and is reachable in a demo; hiding it is cheap
-    and can happen before the files are deleted.
+    it earns its place until that is retired or proved another way. ~~The
+    `debug` link is still in the header and is reachable in a demo.~~ **Done in
+    11b**: the label is gone, and the way in is five taps on an unlabelled
+    corner of the app bar.
 
 ### Not blocking cutover
 
@@ -1701,6 +1770,28 @@ Then, still blocking cutover:
   `Barbell Shoulder Press`/`Strict Barbell Press`, or
   `Dumbbell Hammer Curl`/`Incline Dumbbell Hammer Curl` - the short-lived name
   sits inside the span of the long-lived one, so they are distinct exercises.
+- **Splitting `Chest Dip` into two exercises**, assisted and not. The row holds
+  both: **127 sets record machine assistance** and **53 have no weight at all**,
+  which is one name covering two movements loaded in opposite directions. It
+  shows up as a rough edge in the logging screen - `Chest Dip` is
+  `tracking_type = 'weight_reps'`, so the weight field is required and empty on
+  a bodyweight day, and `LOG SET` sits disabled until a number is typed.
+  Observed on device 2026-08-15.
+
+  Three ways out, and they are not equivalent. Loosening `tracking_type` to
+  `bodyweight` makes weight optional and fixes the tap, but leaves one exercise's
+  history running in two directions, so "best set" and any future PR detection
+  still have to branch per row. Splitting into `Assisted Chest Dip` and
+  `Chest Dip` fixes that too and is the honest model - the same argument that
+  keeps `Assisted Chinup` and `Chinup` apart, which the export already does.
+  Doing nothing costs one tap per bodyweight set.
+
+  **The split is a data migration over five years of history, not a rename**, so
+  it needs a rule for which rows move: `load_mode = 'assistance'` is the obvious
+  candidate and should be checked against the dates before it is trusted.
+  `Chinup` is the same shape and would come along with it. Note this cuts
+  against the alias rule above only in appearance: that rule says do not *merge*
+  distinct exercises, and this splits one that is already two.
 - **Per-exercise metadata** for all 86 (modality, primary muscle).
 - **Import report as a product**, with a golden-file snapshot test over a
   redacted fixture cut as whole sessions (random rows destroy superset

@@ -9,16 +9,24 @@
  * Appearance measured off the reference app (`docs/PROGRESSION.md`): counting
  * down it is a pill with the fill **draining right to left**; past zero it is
  * solid red counting **up**, with no `+` prefix, and it never auto-dismisses.
- * A tap while running skips the rest immediately, with no confirmation - the
- * gesture is cheap to repeat and a dialog mid-workout is not.
+ *
+ * **What a tap does depends on the state, and that is the point.** The
+ * reference app skips the rest on any tap while running. Here a tap while
+ * counting down opens an editor instead, because the rest is a number you
+ * adjust far more often than one you abandon - the machine is taken, or the set
+ * was harder than planned - and losing a running rest to a mistimed tap is not
+ * recoverable, the service having thrown it away. **Past zero, a tap cancels**:
+ * the rest is over, the pill is only still there because it never
+ * auto-dismisses, and dismissing it is the only thing left to want.
  *
  * It renders from the same absolute `endsAt` the service and the bubble draw
  * from, so the three cannot disagree.
  */
 import { useEffect, useState } from 'react'
-import { RestTimer, currentRest } from '../native/restTimer.ts'
+import { RestTimer, currentRest, startRest as startNativeRest } from '../native/restTimer.ts'
 import { formatDuration } from '../logic/entry.ts'
 import { useWorkout } from '../state/workout.ts'
+import { ActionItem, ActionSheet } from './ActionSheet.tsx'
 
 export function RestPill() {
   const endsAt = useWorkout((s) => s.restEndsAt)
@@ -27,6 +35,23 @@ export function RestPill() {
   const clearRest = useWorkout((s) => s.clearRest)
 
   const [now, setNow] = useState(() => Date.now())
+  const [editing, setEditing] = useState(false)
+
+  /**
+   * The editor closes itself when the rest runs out.
+   *
+   * Past zero there is nothing left to adjust - the only thing to want is the
+   * pill gone, which is what a tap does in that state. Leaving the sheet up
+   * measurably produced two wrong things at once: a title reading `0:24 LEFT`
+   * for a rest that had finished 24 seconds earlier, because the pill's
+   * `Math.abs` display is shared with it, and an `Add 30 seconds` that
+   * restarted from now rather than adding to an end that was already behind us.
+   * Both were mistaken for an arithmetic bug before the plugin log showed the
+   * requested duration and gave the real answer.
+   */
+  useEffect(() => {
+    if (editing && endsAt != null && Date.now() > endsAt) setEditing(false)
+  }, [editing, endsAt, now])
 
   /**
    * Recover a rest that is already running.
@@ -78,14 +103,49 @@ export function RestPill() {
   const remaining = totalMs > 0 ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 0
   const drained = `${Math.round(remaining * 100)}%`
 
+  const cancel = () => {
+    void RestTimer.cancel()
+    clearRest()
+  }
+
+  /**
+   * Shift the end instant, and tell the service in the same terms.
+   *
+   * `RestTimer.start` rather than `extend`, in both directions: it takes an
+   * absolute end and a total, which is exactly what the pill needs to keep its
+   * fill honest after a change, and it is the call the service already handles
+   * for a rest beginning. Extending by a negative number would be the same
+   * arithmetic through a name that says the opposite.
+   *
+   * **Read through `getState()`, not the render's `endsAt`.** The first version
+   * closed over the rendered value and `Add 30 seconds` measurably ran the clock
+   * *down*: 1:09 to 0:56 to 0:16 over three taps, and the plugin log showed a
+   * `totalMs` of 15,000 for a pill reading 0:16, which is a value one whole step
+   * out of date. The store is the only thing that knows what the last tap left
+   * behind, so ask it rather than a closure that may predate it. Same reasoning
+   * as the back listener in `nav.ts`.
+   *
+   * **Clamped so a rest cannot be shortened into the past.** Taking 30 s off a
+   * 12-second rest should land on zero and let the count-up start, not create a
+   * rest that was already over 18 seconds ago and drew a full red pill.
+   */
+  const shift = (ms: number) => {
+    const live = useWorkout.getState()
+    if (live.restEndsAt == null) return
+    const nextEndsAt = Math.max(Date.now(), live.restEndsAt + ms)
+    // The total is what the draining fill is a fraction of, so it has to move
+    // with the end or the pill would jump backwards while the clock went on.
+    const nextTotal = Math.max(1000, live.restTotalMs + ms)
+    void startNativeRest(Math.round((nextEndsAt - Date.now()) / 1000))
+    live.startRest(nextEndsAt, nextTotal)
+  }
+
   return (
+    <>
     <button
       type="button"
       aria-label={over ? `Rest over by ${seconds} seconds` : `Rest ${seconds} seconds left`}
-      onClick={() => {
-        void RestTimer.cancel()
-        clearRest()
-      }}
+      onClick={over ? cancel : () => setEditing(true)}
       className="text-text flex h-9 items-center gap-2 rounded-full px-3 text-sm font-semibold tabular-nums"
       // `--color-rest` and `--color-rest-over` were sampled off the reference
       // app when the palette was built and have been defined and unused ever
@@ -104,6 +164,32 @@ export function RestPill() {
       <AlarmIcon className="size-4" />
       {formatDuration(seconds)}
     </button>
+
+      {editing && !over && (
+        <ActionSheet
+          // The live clock, so the sheet says what it is acting on rather than
+          // making you close it to check. `over` is guarded above as well as in
+          // the effect, so the title cannot render the count-up as time "left"
+          // even for the frame between the two.
+          title={`Rest · ${formatDuration(seconds)} left`}
+          onClose={() => setEditing(false)}
+        >
+          {/* The sheet stays open on a step, because trimming a rest is
+              usually two taps of the same button and reopening between them
+              would be the slow way to do the common thing. */}
+          <ActionItem label="Add 30 seconds" onClick={() => shift(30_000)} />
+          <ActionItem label="Take off 30 seconds" onClick={() => shift(-30_000)} />
+          <ActionItem
+            label="Skip the rest"
+            danger
+            onClick={() => {
+              cancel()
+              setEditing(false)
+            }}
+          />
+        </ActionSheet>
+      )}
+    </>
   )
 }
 
