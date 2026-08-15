@@ -97,7 +97,7 @@ export interface TemplateExerciseRow {
   implementCount: number
   preferredUnit: Unit
   baseWeightKg: number | null
-  /** Free text, often null. Feed it to `muscleBadge`, which degrades safely. */
+  /** Free text, often null. Feed it to `muscleMark`, which degrades safely. */
   primaryMuscle: string | null
 }
 
@@ -515,7 +515,7 @@ export interface PerformedSet {
   sessionId: number
   exerciseId: number
   exerciseName: string
-  /** Free text, often null. Feed it to `muscleBadge`, which degrades safely. */
+  /** Free text, often null. Feed it to `muscleMark`, which degrades safely. */
   primaryMuscle: string | null
   orderIndex: number
   setIndex: number

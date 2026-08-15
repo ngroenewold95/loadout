@@ -1,5 +1,5 @@
 /**
- * The logging loop.
+ * The logging loop: one exercise at a time, pushed from `WorkoutOverview`.
  *
  * Everything here serves one constraint: logging a set is about two taps. The
  * fields arrive pre-filled from the previous set (or last session's first), so
@@ -22,16 +22,25 @@
  * drift. It is also why `Undo` is gone - deleting the last slot is the same
  * action, and any other slot can be corrected too, which `Undo` never allowed.
  *
- * **Exercises are a horizontal pager, not a tap strip.** The middle region is a
+ * **Exercises are a horizontal pager, and nothing else.** The middle region is a
  * scroll-snap scroller holding one page per exercise, each with its own vertical
- * scroller, so the three regions survive intact. The strip asked for an accurate
- * tap on a small chip; a swipe asks for nothing. What remains of it is a row of
- * muscle badges, which is a jump target and a position indicator at once.
+ * scroller, so the three regions survive intact.
+ *
+ * The row of muscle badges that used to sit above it is **gone**, and with it
+ * two faults measured on device: a tap more than one page away snapped back,
+ * because the smooth scroll it started dragged intermediate pages through the
+ * `IntersectionObserver` and the index effect then re-targeted the scroll at
+ * one of them; and the ring around the selected badge was clipped, because a
+ * horizontally scrolling container clips on both axes. Both were the same
+ * mistake - a 20 px moving target asked to act as navigation. Swipe to a
+ * neighbour, back out to the overview for anywhere else.
+ *
+ * What replaces it is a segmented progress bar, one segment per exercise,
+ * filled by sets logged. It answers "where am I" without asking for a tap.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   useDeleteSet,
-  useEditSessionPlan,
   useRecentPerformance,
   useLogSet,
   useSessionExercises,
@@ -63,15 +72,34 @@ import { shouldIncreaseLoad } from '../logic/plan.ts'
 import { isComplete, nextIncompleteIndex } from '../logic/session.ts'
 import { setSlots, type SetSlot } from '../logic/slots.ts'
 import { useNav } from '../state/nav.ts'
-import { useExerciseIndex, useWorkout } from '../state/workout.ts'
-import { formatWeight, type Unit } from '../logic/units.ts'
+import { useEntryDraft, useExerciseIndex, useWorkout } from '../state/workout.ts'
+import { formatWeight, weightsEqual, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
 import { EntryField } from './EntryField.tsx'
 import { HistoryCard } from './HistoryCard.tsx'
-import { MuscleBadge } from './MuscleBadge.tsx'
+import { GroupRail, GroupWord } from './GroupTag.tsx'
 
 interface Props {
   session: SessionRow
+  /** Where to open. The pager owns the position from there - see `workout.ts`. */
+  openAt: number
+}
+
+/**
+ * Compare two nullable numbers, one of which may be a weight.
+ *
+ * Weights must go through `weightsEqual`, never `===`: 9 of the 105 distinct
+ * weights in five years of history fail a bit-exact lb->kg->lb round trip, and
+ * this is exactly the shape that bites - a stored value against a freshly
+ * computed one.
+ */
+function bothNullOr(
+  a: number | null,
+  b: number | null,
+  equal: (x: number, y: number) => boolean,
+): boolean {
+  if (a == null || b == null) return a == null && b == null
+  return equal(a, b)
 }
 
 /** Render a set the way it was performed, whatever shape it is. */
@@ -84,7 +112,7 @@ function describeSet(set: PerformedSet, unit: Unit): string {
   return parts.join(' ')
 }
 
-export function ActiveSession({ session }: Props) {
+export function ExerciseView({ session, openAt }: Props) {
   const push = useNav((s) => s.push)
   const openSummary = () => push({ kind: 'summary', sessionId: session.id })
 
@@ -98,24 +126,35 @@ export function ActiveSession({ session }: Props) {
   // Outside the component, so pushing the summary and coming back does not
   // reset the pager to the first exercise. Measured on device; see workout.ts.
   const index = useExerciseIndex(session.id)
-  // Stable, so the observer effect below is not torn down and rebuilt on every
-  // render just to close over a fresh copy of it.
+  /**
+   * Move the pager, and keep the nav stack saying the same thing.
+   *
+   * The screen entry carries the index it was opened at, and this screen gets
+   * re-mounted every time something pushed over it pops. Without the `replace`
+   * the entry would still hold the page you *arrived* on, and coming back from
+   * the summary would land there instead of where you had swiped to - which is
+   * the exact bug stage 8 already fixed once, in a different place.
+   *
+   * Stable, so the observer effect below is not torn down and rebuilt on every
+   * render just to close over a fresh copy of it.
+   */
   const setIndex = useCallback(
-    (at: number) => useWorkout.getState().setIndex(session.id, at),
+    (at: number) => {
+      useWorkout.getState().setIndex(session.id, at)
+      useNav.getState().replace({ kind: 'exercise', sessionId: session.id, index: at })
+    },
     [session.id],
   )
+
   const pagerRef = useRef<HTMLDivElement>(null)
   // The rest lives in the store, not here: the pill that renders it sits in the
   // app bar, which is above this screen and outlives it.
   const startRestTimer = useWorkout((s) => s.startRest)
-  /** The set the entry bar is pointed at, or null when it is entering a new one. */
-  const [editingSetId, setEditingSetId] = useState<number | null>(null)
 
   const logSet = useLogSet()
   const updateSet = useUpdateSet()
   const deleteSet = useDeleteSet()
   const planSets = useSetPlannedSets()
-  const plan = useEditSessionPlan(session.id)
 
   const current = planned?.[index]
   const shape = current ? entryShape(current.trackingType) : null
@@ -132,37 +171,61 @@ export function ActiveSession({ session }: Props) {
   // midnight, and a workout that crosses midnight has bigger problems.
   const today = useMemo(() => localDateOf(), [])
 
-  // Draft entry. Re-seeded whenever the exercise changes or a set lands, which
-  // is what makes the next set a single tap.
-  const [weightKg, setWeightKg] = useState<number | null>(null)
-  const [reps, setReps] = useState<number | null>(null)
-  const [durationS, setDurationS] = useState<number | null>(null)
-
-  // Moving to another exercise must drop the edit target with it, or the bar
-  // would still be pointed at a set that is no longer on screen.
+  /**
+   * Draft entry, held in the store rather than here.
+   *
+   * This screen is pushed, so opening the summary or the picker unmounts it,
+   * and a half-typed weight held in `useState` would be gone on the way back.
+   * `useEntryDraft` returns null for any other exercise, so there is no stale
+   * value to guard against at the call sites below.
+   */
   const exerciseId = current?.exerciseId
-  useEffect(() => {
-    setEditingSetId(null)
-  }, [exerciseId])
+  const draft = useEntryDraft(session.id, exerciseId)
+  const patchDraft = useWorkout((s) => s.patchDraft)
+  const clearDraft = useWorkout((s) => s.clearDraft)
+  const weightKg = draft?.weightKg ?? null
+  const reps = draft?.reps ?? null
+  const durationS = draft?.durationS ?? null
+  /** The set the entry bar is pointed at, or null when it is entering a new one. */
+  const editingSetId = draft?.editingSetId ?? null
+
+  // `patchDraft` marks the draft touched, which is what makes it survive a
+  // push. Every one of these is a hand edit, so that is exactly right.
+  const stepWeightBy = (steps: number) =>
+    patchDraft({ weightKg: stepWeight(weightKg, steps, unit) })
+  const stepRepsBy = (steps: number) => patchDraft({ reps: stepReps(reps, steps) })
+  const stepDurationBy = (steps: number) =>
+    patchDraft({ durationS: stepDuration(durationS, steps) })
 
   /**
-   * Put the pager on the right page before anything observes it.
+   * Put the pager on the right page, and tell the store, before anything
+   * observes either.
    *
-   * A layout effect, and it sets `scrollLeft` directly rather than scrolling
+   * A layout effect setting `scrollLeft` directly rather than scrolling
    * smoothly, for a reason that is a race rather than a preference: the observer
    * below would otherwise register while page 0 was still in view, fire, and
-   * reset the index that was just restored. Positioning synchronously before
-   * paint means the observer's first callback agrees with the state instead of
-   * fighting it. It also means returning from the summary does not animate a
-   * scroll the user did not ask for.
+   * reset the position. Positioning synchronously before paint means the
+   * observer's first callback agrees with the state instead of fighting it.
+   *
+   * **`openAt` is the authority here, not the rendered `index`.** Doing this in
+   * two effects - one to write `openAt` into the store, one to position the
+   * pager - looked equivalent and was not: the second read the index from a
+   * render that had not seen the first, positioned the pager at page 0, and the
+   * observer then claimed page 0 as the truth. Measured on device, opening
+   * exercise 9 of 10 from the overview landed on 2 of 10. One effect, one
+   * source, no window in between.
    */
   const [pagerReady, setPagerReady] = useState(false)
   useLayoutEffect(() => {
     const pager = pagerRef.current
-    if (!pager || pagerReady) return
-    pager.scrollLeft = index * pager.clientWidth
+    if (!pager || pagerReady || !planned?.length) return
+    // Clamped: an exercise removed from the overview can leave a nav entry
+    // pointing past the end of the list.
+    const at = Math.min(Math.max(openAt, 0), planned.length - 1)
+    useWorkout.getState().setIndex(session.id, at)
+    pager.scrollLeft = at * pager.clientWidth
     setPagerReady(true)
-  }, [planned, index, pagerReady])
+  }, [planned, pagerReady, openAt, session.id])
 
   /**
    * Swiping updates the index.
@@ -209,21 +272,90 @@ export function ActiveSession({ session }: Props) {
     pager.scrollTo({ left: target, behavior: 'smooth' })
   }, [index, pagerReady])
 
+  /**
+   * Seed the draft, and re-seed it whenever the answer it holds goes stale.
+   *
+   * **A hand-edited draft is left alone.** Everything below is the prefill
+   * chain's own answer, and re-deriving it is right up until the moment a
+   * number has been typed - after that, overwriting it would throw away the
+   * only value in the bar nobody could recompute. `touched` is the whole
+   * difference, and it is what lets the draft survive a push at all.
+   *
+   * Aiming the bar at a set is a hand edit as well, so `handleSelectSet` loads
+   * that set's numbers itself rather than leaving it to this effect. One place
+   * decides what the bar holds in each case, instead of two taking turns.
+   */
+  const setDraft = useWorkout((s) => s.setDraft)
   useEffect(() => {
     if (!current) return
-    // Correcting a set seeds from that set; otherwise from the prefill chain.
-    const editing = (sets ?? []).find((s) => s.id === editingSetId)
-    if (editing) {
-      setWeightKg(editing.weightKg)
-      setReps(editing.reps)
-      setDurationS(editing.durationS)
+    const live = useWorkout.getState().draft
+    const mine =
+      live && live.sessionId === session.id && live.exerciseId === current.exerciseId
+        ? live
+        : null
+    const fill = prefillFor(sets ?? [], current.exerciseId, lastTime)
+    const reps = fill.reps ?? current.targetRepMin ?? null
+
+    /**
+     * Two ways to already be right, and **both** are load-bearing.
+     *
+     * `touched` is the one this exists for: a hand-edited draft is never
+     * overwritten. The value comparison is what stops the effect looping - it
+     * writes a fresh object, and `draft` is a dependency, so seeding an
+     * untouched draft that is already correct would re-trigger this and seed
+     * again, forever. That is React error #185, and it took the screen down on
+     * device before this check existed.
+     */
+    if (
+      mine &&
+      (mine.touched ||
+        (bothNullOr(mine.weightKg, fill.weightKg, weightsEqual) &&
+          mine.reps === reps &&
+          mine.durationS === fill.durationS &&
+          mine.editingSetId === null))
+    ) {
       return
     }
-    const fill = prefillFor(sets ?? [], current.exerciseId, lastTime)
-    setWeightKg(fill.weightKg)
-    setReps(fill.reps ?? current.targetRepMin ?? null)
-    setDurationS(fill.durationS)
-  }, [current, sets, lastTime, editingSetId])
+
+    setDraft({
+      sessionId: session.id,
+      exerciseId: current.exerciseId,
+      weightKg: fill.weightKg,
+      reps,
+      durationS: fill.durationS,
+      editingSetId: null,
+      touched: false,
+    })
+    // `draft` is a dependency so that dropping it - logging a set, saving a
+    // correction, cancelling - re-seeds immediately rather than waiting for the
+    // refetch to hand back a new `sets` array.
+  }, [current, sets, lastTime, session.id, setDraft, draft])
+
+  /**
+   * Point the bar at a set, or back at entering a new one.
+   *
+   * Tapping the slot already being corrected is its own cancel, and cancelling
+   * drops the draft entirely so the effect above re-seeds from the prefill
+   * chain - which is what "back to entering" has to mean.
+   */
+  const handleSelectSet = (setId: number) => {
+    if (!current) return
+    if (editingSetId === setId) {
+      clearDraft()
+      return
+    }
+    const set = (sets ?? []).find((s) => s.id === setId)
+    if (!set) return
+    setDraft({
+      sessionId: session.id,
+      exerciseId: current.exerciseId,
+      weightKg: set.weightKg,
+      reps: set.reps,
+      durationS: set.durationS,
+      editingSetId: setId,
+      touched: true,
+    })
+  }
 
   if (!planned || !current || !shape) {
     return <p className="px-5 py-8 text-text-dim">Loading session…</p>
@@ -238,9 +370,7 @@ export function ActiveSession({ session }: Props) {
     logSet.isPending ||
     updateSet.isPending ||
     deleteSet.isPending ||
-    planSets.isPending ||
-    plan.remove.isPending ||
-    plan.reorder.isPending
+    planSets.isPending
 
   /**
    * The three values a set carries, in the shape both paths need.
@@ -265,6 +395,10 @@ export function ActiveSession({ session }: Props) {
       ...payload,
       baseWeightKg: current.baseWeightKg,
     })
+    // The draft has served its purpose, and it is `touched`, so leaving it would
+    // pin the numbers just logged instead of letting the prefill chain answer
+    // for the next set. Dropping it is what re-seeds.
+    clearDraft()
     // Rest starts as a consequence of logging, never as its own tap.
     if (current.restS) {
       startRestTimer(await startRest(current.restS), current.restS * 1000)
@@ -295,37 +429,7 @@ export function ActiveSession({ session }: Props) {
       patch: payload,
     })
     // Back to entering, which re-seeds the draft from the prefill chain.
-    setEditingSetId(null)
-  }
-
-  /**
-   * Take an exercise out of the workout.
-   *
-   * The pager index is clamped afterwards, because removing the last exercise
-   * while standing on it would leave `index` pointing past the end of the list
-   * and the screen would render its loading state forever.
-   */
-  const handleRemove = async (exerciseId: number) => {
-    await plan.remove.mutateAsync({ exerciseId })
-    setIndex(Math.min(index, planned.length - 2))
-  }
-
-  /**
-   * Move an exercise one place, and follow it.
-   *
-   * The whole order is rewritten rather than two rows swapped - see
-   * `reorderSessionExercises`. Following it with the pager is the point: you
-   * moved this exercise, so this exercise is still the one you are looking at.
-   */
-  const handleMove = async (exerciseId: number, by: -1 | 1) => {
-    const ids = planned.map((p) => p.exerciseId)
-    const from = ids.indexOf(exerciseId)
-    const to = from + by
-    if (from < 0 || to < 0 || to >= ids.length) return
-
-    ids.splice(to, 0, ...ids.splice(from, 1))
-    await plan.reorder.mutateAsync({ exerciseIds: ids })
-    setIndex(to)
+    clearDraft()
   }
 
   const handleDelete = async () => {
@@ -333,7 +437,7 @@ export function ActiveSession({ session }: Props) {
     // The repo closes the numbering gap a middle delete leaves, so the slots
     // renumber themselves on the refetch.
     await deleteSet.mutateAsync({ setId: editingSetId, sessionId: session.id })
-    setEditingSetId(null)
+    clearDraft()
   }
 
   // Progress as a fraction, always visible - `docs/PROGRESSION.md` lists it as
@@ -354,60 +458,44 @@ export function ActiveSession({ session }: Props) {
       {/* Region 1: pinned. Navigation and the answer to "where am I". */}
       <div className="shrink-0">
         <div className="flex items-center justify-between gap-3 px-5 pt-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <MuscleBadge primaryMuscle={current.primaryMuscle} />
-            <h2 className="truncate text-xl font-semibold">{current.name}</h2>
+          <div className="flex min-w-0 items-stretch gap-3">
+            <GroupRail primaryMuscle={current.primaryMuscle} />
+            <div className="min-w-0">
+              <h2 className="truncate text-xl font-semibold">{current.name}</h2>
+              <GroupWord primaryMuscle={current.primaryMuscle} />
+            </div>
           </div>
-          <div className="text-text-dim flex shrink-0 items-center gap-4 text-sm">
-            <span className="tabular-nums">
-              {index + 1}/{planned.length}
-            </span>
-            {/* Deliberately small, and nowhere near LOG SET. It opens the
-                summary rather than ending the session: nothing is saved by
-                finishing, so nothing should be decided by a stray tap here. */}
-            <button className="active:text-text" onClick={openSummary}>
-              Finish
-            </button>
-          </div>
+          {/* `Finish` is gone from here: it lives on the overview now, which is
+              one back gesture away and is not a screen a thumb aims at while
+              logging. The mis-tap `PROJECT.md` records landed on exactly that
+              button. */}
+          <span className="text-text-dim shrink-0 text-sm tabular-nums">
+            {index + 1}/{planned.length}
+          </span>
         </div>
 
         <p className="text-text-dim px-5 pt-1 text-sm">{targetLine}</p>
 
-        {/* What is left of the tap strip: badges only, no names.
+        {/* Where you are in the workout, as progress rather than navigation.
 
-            The strip was 11 text chips asking for an accurate tap while the
-            layout moved. The pager is now how you move between exercises, so
-            this is a position indicator first and a jump target second - but it
-            stays tappable, because swiping from exercise 1 to exercise 9 is
-            eight gestures and one tap. A complete exercise is dimmed. */}
-        <div className="mt-3 flex gap-1.5 overflow-x-auto px-5 pb-1">
+            One segment per exercise, filled when its target is met and lit for
+            the one in view. It replaces the badge strip, which asked for an
+            accurate tap on a 20 px target while the layout moved and got two
+            faults on device for it. Nothing here is tappable: going anywhere
+            other than a neighbour is what the overview is for. */}
+        <div className="mt-3 flex gap-1 px-5 pb-1" aria-hidden="true">
           {planned.map((p, i) => {
             const count = (sets ?? []).filter((s) => s.exerciseId === p.exerciseId).length
             const complete = p.targetSets != null && count >= p.targetSets
             return (
-              <button
+              <span
                 key={p.exerciseId}
-                aria-label={p.name}
-                onClick={() => setIndex(i)}
-                className={`flex size-tap shrink-0 items-center justify-center rounded-full ${
-                  i === index ? 'ring-primary ring-2' : complete ? 'opacity-40' : ''
+                className={`h-1 flex-1 rounded-full ${
+                  i === index ? 'bg-primary' : complete ? 'bg-text-dim' : 'bg-muted'
                 }`}
-              >
-                <MuscleBadge primaryMuscle={p.primaryMuscle} size="sm" />
-              </button>
+              />
             )
           })}
-
-          {/* The strip IS the exercise list, so `+` at the end of it is where
-              adding one belongs. Session-level, and always reachable without
-              scrolling to the bottom of a page. */}
-          <button
-            aria-label="Add exercise"
-            onClick={() => push({ kind: 'picker', sessionId: session.id })}
-            className="border-muted text-text-dim active:text-text flex size-tap shrink-0 items-center justify-center rounded-full border border-dashed text-lg"
-          >
-            +
-          </button>
         </div>
       </div>
 
@@ -434,17 +522,10 @@ export function ActiveSession({ session }: Props) {
             // render a slot as `editing`.
             editingSetId={i === index ? editingSetId : null}
             disabled={busy}
-            onSelectSet={(id) => setEditingSetId((prev) => (prev === id ? null : id))}
+            onSelectSet={handleSelectSet}
             onPlanSets={(exerciseId, targetSets) =>
               planSets.mutate({ sessionId: session.id, exerciseId, targetSets })
             }
-            onReplace={(exerciseId) =>
-              push({ kind: 'picker', sessionId: session.id, replacing: exerciseId })
-            }
-            onRemove={handleRemove}
-            onMove={handleMove}
-            canMoveEarlier={i > 0}
-            canMoveLater={i < planned.length - 1}
           />
         ))}
       </div>
@@ -462,11 +543,9 @@ export function ActiveSession({ session }: Props) {
                 display={weightKg == null ? '' : formatWeight(weightKg, unit)}
                 unit={unit}
                 stepLabel={String(WEIGHT_STEPS[unit][0])}
-                onStep={(steps) =>
-                  setWeightKg((kg) => stepWeight(kg, steps * WEIGHT_STEPS[unit][0], unit))
-                }
+                onStep={(steps) => stepWeightBy(steps * WEIGHT_STEPS[unit][0])}
                 parse={(text) => parseWeight(text, unit)}
-                onParsed={setWeightKg}
+                onParsed={(kg) => patchDraft({ weightKg: kg })}
               />
             )}
 
@@ -475,9 +554,9 @@ export function ActiveSession({ session }: Props) {
                 display={reps == null ? '' : String(reps)}
                 unit="reps"
                 stepLabel="1"
-                onStep={(steps) => setReps((r) => stepReps(r, steps))}
+                onStep={stepRepsBy}
                 parse={parseReps}
-                onParsed={setReps}
+                onParsed={(r) => patchDraft({ reps: r })}
               />
             )}
           </div>
@@ -489,7 +568,7 @@ export function ActiveSession({ session }: Props) {
               <EntryField
                 display={formatDuration(durationS ?? 0)}
                 stepLabel="15s"
-                onStep={(steps) => setDurationS((d) => stepDuration(d, steps * 15))}
+                onStep={(steps) => stepDurationBy(steps * 15)}
               />
             </div>
           )}
@@ -503,7 +582,7 @@ export function ActiveSession({ session }: Props) {
             <div className="flex items-center justify-between px-1 text-sm">
               <button
                 className="text-text-dim active:text-text px-2 py-1"
-                onClick={() => setEditingSetId(null)}
+                onClick={clearDraft}
               >
                 Cancel
               </button>
@@ -548,11 +627,6 @@ function ExercisePage({
   disabled,
   onSelectSet,
   onPlanSets,
-  onReplace,
-  onRemove,
-  onMove,
-  canMoveEarlier,
-  canMoveLater,
 }: {
   pageIndex: number
   planned: TemplateExerciseRow
@@ -565,11 +639,6 @@ function ExercisePage({
   onSelectSet: (setId: number) => void
   /** Raise or lower how many sets THIS session is asking for. */
   onPlanSets: (exerciseId: number, targetSets: number) => void
-  onReplace: (exerciseId: number) => void
-  onRemove: (exerciseId: number) => void
-  onMove: (exerciseId: number, by: -1 | 1) => void
-  canMoveEarlier: boolean
-  canMoveLater: boolean
 }) {
   const unit: Unit = planned.preferredUnit
   const done = useMemo(
@@ -677,39 +746,11 @@ function ExercisePage({
         )}
       </div>
 
-      {/* Plan edits, at the bottom because they are rare and because none of
-          them should sit near a thumb aiming at LOG SET. They write to this
-          session only - the programme is not touched by any of them. */}
-      <div className="text-text-dim mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-sm">
-        <button
-          className="active:text-text disabled:opacity-30"
-          disabled={disabled || !canMoveEarlier}
-          onClick={() => onMove(planned.exerciseId, -1)}
-        >
-          Move earlier
-        </button>
-        <button
-          className="active:text-text disabled:opacity-30"
-          disabled={disabled || !canMoveLater}
-          onClick={() => onMove(planned.exerciseId, 1)}
-        >
-          Move later
-        </button>
-        <button
-          className="active:text-text disabled:opacity-40"
-          disabled={disabled}
-          onClick={() => onReplace(planned.exerciseId)}
-        >
-          Replace
-        </button>
-        <button
-          className="text-danger ml-auto disabled:opacity-40"
-          disabled={disabled}
-          onClick={() => onRemove(planned.exerciseId)}
-        >
-          Remove
-        </button>
-      </div>
+      {/* Plan edits used to sit here as a row of four. They are on the overview
+          card now, which is where the reference app puts them and where they
+          act on an exercise you are looking at rather than one you are lifting.
+          `Move earlier` / `Move later` are gone outright: with a list to jump
+          from, reordering a live workout answers no question. */}
     </div>
   )
 }

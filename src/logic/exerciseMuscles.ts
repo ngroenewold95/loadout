@@ -13,7 +13,7 @@
  * find, so a rename shows up as a failing test instead of a silent `?` badge.
  *
  * **`null` means deliberately unclassified**, not "not done yet". Cardio and
- * general mobility have no single primary group, and `muscleBadge` renders them
+ * general mobility have no single primary group, and `muscleMark` renders them
  * as the neutral `?` circle. Guessing would be worse than admitting it: the
  * whole point of the colour is that it is reliable at a glance.
  */

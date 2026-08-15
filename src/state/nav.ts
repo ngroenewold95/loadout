@@ -46,10 +46,35 @@ export type Screen =
    * exercise in place, keeping its sets, reps and rest; without, it appends.
    */
   | { kind: 'picker'; sessionId: number; replacing?: number }
+  /**
+   * A template, read-only, before any session exists.
+   *
+   * Home used to start a workout the instant a template was tapped, so there
+   * was no way to look at what was coming without committing to it. Read-only
+   * because there is nothing to write: `session_exercises` is a snapshot
+   * `startSession` takes, so editing before the start would have no home.
+   */
+  | { kind: 'template'; templateId: number }
+  /**
+   * Log one exercise of a live workout. `index` is only where to open - the
+   * pager moves from there, and `state/workout.ts` owns the position.
+   */
+  | { kind: 'exercise'; sessionId: number; index: number }
 
 interface NavState {
   /** Root first. Empty means the root screen, which is not a member. */
   stack: Screen[]
+  /**
+   * How to close whatever overlay is open, or null when none is.
+   *
+   * An action sheet is not a screen - it does not belong on the stack, and
+   * pushing one would put a back arrow in the app bar for something a tap
+   * outside dismisses. But back must still close it before popping the screen
+   * underneath, or the first back gesture after opening a menu would leave the
+   * workout entirely. So `back()` asks here first.
+   */
+  dismiss: (() => void) | null
+  setDismiss: (fn: (() => void) | null) => void
   push: (screen: Screen) => void
   /**
    * Swap the top screen without deepening the stack. **No-op at the root**,
@@ -64,6 +89,8 @@ interface NavState {
 
 export const useNav = create<NavState>((set, get) => ({
   stack: [],
+  dismiss: null,
+  setDismiss: (fn) => set({ dismiss: fn }),
   push: (screen) => set((s) => ({ stack: [...s.stack, screen] })),
   // The length guard is load-bearing: `[...[].slice(0, -1), screen]` is
   // `[screen]`, so without it a replace at the root would PUSH instead, giving
@@ -71,11 +98,20 @@ export const useNav = create<NavState>((set, get) => ({
   replace: (screen) =>
     set((s) => (s.stack.length === 0 ? s : { stack: [...s.stack.slice(0, -1), screen] })),
   back: () => {
+    // An overlay closes first, and counts as having handled the gesture even at
+    // the root - which is exactly the case that matters, since the workout
+    // overview IS the root and a menu open over it must not exit the app.
+    const dismiss = get().dismiss
+    if (dismiss) {
+      set({ dismiss: null })
+      dismiss()
+      return true
+    }
     if (get().stack.length === 0) return false
     set((s) => ({ stack: s.stack.slice(0, -1) }))
     return true
   },
-  reset: () => set({ stack: [] }),
+  reset: () => set({ stack: [], dismiss: null }),
 }))
 
 /** The screen on top, or null at the root. Referentially stable per stack. */

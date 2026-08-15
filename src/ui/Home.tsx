@@ -1,27 +1,33 @@
 /**
- * Start or resume a workout.
+ * Choose a workout.
  *
  * "Next up" is whichever template was performed least recently, because the
  * programme rotates A/B rolling rather than by weekday - miss a week and you
  * resume where you left off instead of skipping a day.
+ *
+ * **Tapping a template opens it; it does not start it.** Starting writes a
+ * session row and snapshots the whole plan into `session_exercises`, and
+ * `startSession` refuses to open a second one, so a stray tap here used to be a
+ * workout you then had to discard. The preview it pushes carries the
+ * `Start workout` button, so the commitment is its own deliberate tap and you
+ * can look at what is coming without making it.
  */
-import { useNextTemplate, useStartSession, useTemplates } from '../state/queries.ts'
+import { useNextTemplate, useTemplates } from '../state/queries.ts'
+import { useNav } from '../state/nav.ts'
 
 export function Home() {
   const { data: templates } = useTemplates()
   const { data: next } = useNextTemplate()
-  const startSession = useStartSession()
+  const push = useNav((s) => s.push)
 
-  const start = (id: number, name: string) =>
-    startSession.mutate({ templateId: id, name })
+  const open = (id: number) => push({ kind: 'template', templateId: id })
 
   return (
     <div className="flex flex-col gap-4 px-5">
       {next && (
         <button
-          className="bg-primary text-on-primary rounded-2xl px-5 py-6 text-left active:opacity-90 disabled:opacity-40"
-          disabled={startSession.isPending}
-          onClick={() => start(next.id, next.name)}
+          className="bg-primary text-on-primary rounded-2xl px-5 py-6 text-left active:opacity-90"
+          onClick={() => open(next.id)}
         >
           <span className="block text-xs tracking-wide uppercase opacity-70">Next up</span>
           <span className="block text-xl font-semibold">{next.name}</span>
@@ -38,9 +44,8 @@ export function Home() {
           .map((t) => (
             <button
               key={t.id}
-              className="bg-surface-1 active:bg-surface-3 rounded-xl px-4 py-4 text-left disabled:opacity-40"
-              disabled={startSession.isPending}
-              onClick={() => start(t.id, t.name)}
+              className="bg-surface-1 active:bg-surface-3 rounded-xl px-4 py-4 text-left"
+              onClick={() => open(t.id)}
             >
               <span className="block font-medium">{t.name}</span>
               <span className="text-text-dim block text-sm opacity-70">
@@ -50,12 +55,6 @@ export function Home() {
             </button>
           ))}
       </div>
-
-      {startSession.isError && (
-        <p className="bg-surface-1 text-danger rounded-xl px-3 py-2 text-sm">
-          {(startSession.error as Error).message}
-        </p>
-      )}
     </div>
   )
 }

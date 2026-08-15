@@ -19,6 +19,34 @@
  */
 import { create } from 'zustand'
 
+/**
+ * The numbers in the entry bar, and which set they are aimed at.
+ *
+ * Out here for the same reason the pager index is, and now for a case that
+ * happens routinely rather than once: the exercise view is a PUSHED screen, so
+ * opening the summary, the picker or an exercise's detail unmounts it. Held in
+ * `useState` a half-typed weight would be gone on the way back. `PROJECT.md`
+ * recorded that loss as known and unsolved; this is where it gets solved.
+ *
+ * **`touched` is what makes restoring safe.** A pristine draft is only ever the
+ * prefill chain's own answer, and that answer can go stale while the screen is
+ * away - a set logged from somewhere else, an exercise swapped out. So a
+ * pristine draft is re-seeded on return and only a hand-edited one survives. It
+ * is the difference between remembering what you typed and pinning a value that
+ * was never yours.
+ */
+export interface EntryDraft {
+  sessionId: number
+  exerciseId: number
+  weightKg: number | null
+  reps: number | null
+  durationS: number | null
+  /** The set the bar is correcting, or null when it is entering a new one. */
+  editingSetId: number | null
+  /** Set once a number has been changed by hand. See above. */
+  touched: boolean
+}
+
 interface WorkoutState {
   /** Which session `index` belongs to. Null before any workout is opened. */
   sessionId: number | null
@@ -42,6 +70,17 @@ interface WorkoutState {
   startRest: (endsAt: number, totalMs: number) => void
   extendRest: (ms: number) => void
   clearRest: () => void
+
+  /** The entry bar's numbers, or null when nothing is being entered. */
+  draft: EntryDraft | null
+  /** Replace the draft outright. Used by the re-seed from the prefill chain. */
+  setDraft: (draft: EntryDraft) => void
+  /**
+   * Change part of the draft. **Marks it touched**, because every caller is a
+   * hand edit: a step button, a scrub, the keypad, or aiming at another set.
+   */
+  patchDraft: (patch: Partial<Omit<EntryDraft, 'sessionId' | 'exerciseId'>>) => void
+  clearDraft: () => void
 }
 
 export const useWorkout = create<WorkoutState>((set) => ({
@@ -59,8 +98,32 @@ export const useWorkout = create<WorkoutState>((set) => ({
         : { restEndsAt: s.restEndsAt + ms, restTotalMs: s.restTotalMs + ms },
     ),
   clearRest: () => set({ restEndsAt: null, restTotalMs: 0 }),
+
+  draft: null,
+  setDraft: (draft) => set({ draft }),
+  patchDraft: (patch) =>
+    set((s) => (s.draft ? { draft: { ...s.draft, ...patch, touched: true } } : s)),
+  clearDraft: () => set({ draft: null }),
 }))
 
 /** The pager position for `sessionId`, or 0 for any other session. */
 export const useExerciseIndex = (sessionId: number): number =>
   useWorkout((s) => (s.sessionId === sessionId ? s.index : 0))
+
+/**
+ * The draft, but only if it belongs to this exercise of this session.
+ *
+ * Same guard as `useExerciseIndex` and for the same reason: a draft left over
+ * from another exercise would arrive as a weight that was never entered for the
+ * one on screen, which is worse than an empty field. The check lives here so no
+ * call site can forget it.
+ */
+export const useEntryDraft = (
+  sessionId: number,
+  exerciseId: number | undefined,
+): EntryDraft | null =>
+  useWorkout((s) =>
+    s.draft && s.draft.sessionId === sessionId && s.draft.exerciseId === exerciseId
+      ? s.draft
+      : null,
+  )

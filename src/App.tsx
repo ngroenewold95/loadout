@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useActiveSession } from './state/queries.ts'
 import { useCurrentScreen, useNav, useSystemBack, type Screen } from './state/nav.ts'
-import { ActiveSession } from './ui/ActiveSession'
+import { ExerciseView } from './ui/ExerciseView'
+import { TemplatePreview, WorkoutOverview } from './ui/WorkoutOverview'
 import { AppHeader } from './ui/AppHeader'
 import { Home } from './ui/Home'
 import { SessionSummary } from './ui/SessionSummary'
@@ -26,6 +27,10 @@ const SCREEN_TITLES: Record<Screen['kind'], string> = {
   spikes: 'Debug',
   summary: 'Summary',
   picker: 'Choose exercise',
+  // Both of these screens name themselves in their own content - the template's
+  // day name, the exercise's name - so the bar says what kind of thing it is.
+  template: 'Workout',
+  exercise: 'Exercise',
 }
 
 function Shell() {
@@ -60,11 +65,14 @@ function Shell() {
       {/* `min-h-0` so a flex child is allowed to be shorter than its content
           and scroll, rather than pushing the shell taller. */}
       <main className="flex min-h-0 flex-1 flex-col">
-        {/* A pushed screen REPLACES the one below it, which unmounts. That is
-            right for the spikes and costs nothing today. The first push from
-            inside a live workout (the exercise detail, stage 11) is where it
-            has to be reconsidered, because unmounting ActiveSession throws away
-            a half-typed entry draft. Decide it there, against a real case. */}
+        {/* A pushed screen REPLACES the one below it, which unmounts.
+
+            `nav.ts` flagged the first push from inside a live workout as where
+            that had to be reconsidered, because unmounting the logging screen
+            throws away a half-typed entry draft. It is no longer a first: the
+            exercise screen is itself pushed, so every summary and picker takes
+            it down. The draft therefore lives in `state/workout.ts` now, beside
+            the pager index and the rest, and unmounting costs nothing. */}
         {screen?.kind === 'spikes' ? (
           <div className="pb-safe-b flex flex-col gap-4 overflow-y-auto px-5 pt-4">
             <DbSmoke />
@@ -78,10 +86,17 @@ function Shell() {
             sessionId={screen.sessionId}
             replacing={screen.replacing}
           />
+        ) : screen?.kind === 'template' ? (
+          <TemplatePreview templateId={screen.templateId} />
         ) : isLoading ? (
           <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
+        ) : screen?.kind === 'exercise' && session ? (
+          <ExerciseView session={session} openAt={screen.index} />
         ) : session ? (
-          <ActiveSession session={session} />
+          // The root while a workout is live. Cold start resumes to here, which
+          // is the list, not whichever exercise was open - the workout is the
+          // thing being resumed.
+          <WorkoutOverview session={session} />
         ) : (
           <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto pt-4">
             <Home />

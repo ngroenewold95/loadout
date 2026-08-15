@@ -4,7 +4,7 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-08-13
+Last updated: 2026-08-15
 
 ---
 
@@ -72,7 +72,11 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   the countdown after the WebView was destroyed mid-rest. See below.
 - **A browser dev seed**, so `npm run dev` opens with fabricated history instead
   of an empty database. See below.
-- 198 tests passing, typecheck and lint clean
+- **Workout overview screen, verified on device** - the workout is a list you
+  back out to and jump from, Home no longer starts a session on a tap, and the
+  exercise identity is a colour rail and the group's name rather than a
+  lettered circle. See below.
+- 208 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
 UI stages below consume them:
@@ -82,7 +86,7 @@ UI stages below consume them:
 - `exercises.loading` and `exercises.default_increment_kg`, both **null for all
   87 rows**, so plate chips stay dormant until they are populated
 
-Not built yet: stages 11-16 below - the exercise library and detail screen, the
+Not built yet: stages 11b-17 below - the exercise library and detail screen, the
 template editor, plate chips, the settings that matter in a gym, and the
 synced-folder export.
 
@@ -361,7 +365,7 @@ bar at that set: the scrub and the keypad correct it exactly as they enter a
 fresh one. A modal editor was the alternative and was rejected twice over - the
 codebase has **no dialog primitive at all**, so it would have been a component
 built to be used once, and it would have been a second number editor free to
-drift from the first. That is the same reuse argument stage 12 depends on for
+drift from the first. That is the same reuse argument stage 13 depends on for
 the template editor.
 
 `Cancel` and `Delete set` sit **above** the primary button, not beside it. The
@@ -592,9 +596,10 @@ which is the thing stage 6 called wrong and could not fix.
   rough edge: it is never "complete", so **auto-advance keeps returning to it**
   and only `Finish` ends the workout.
 
-**Not verified by tapping:** `Replace`, `Move earlier` and `Move later`. All
-three are covered by repo tests, but their UI paths were never exercised on the
-phone.
+~~**Not verified by tapping:** `Replace`, `Move earlier` and `Move later`.~~
+**All three have now been tapped on the phone**, in stage 11a, from the
+overview's exercise menu rather than from the logging screen. See "Workout
+overview".
 
 ---
 
@@ -684,12 +689,14 @@ nothing gesture-specific to handle and no extra listener. Registering any
 running alongside it, so leaving the app became ours to do explicitly with
 `App.exitApp()`.
 
-**A pushed screen unmounts the one below it.** That is right for the spikes and
-costs nothing today. The first push from inside a live workout (exercise detail)
-is where it has to be reconsidered, because unmounting `ActiveSession` throws
-away a half-typed entry draft. `display: none` is not the easy answer: Chrome
-resets `scrollTop` when an element is hidden that way, which would lose the
-history scroller's position.
+**A pushed screen unmounts the one below it.** That was flagged here as
+something to reconsider at the first push from inside a live workout, because
+unmounting the logging screen throws away a half-typed entry draft.
+**Settled in stage 11a**, and not by keeping the screen mounted: the logging
+screen is itself pushed now, so it is unmounted routinely, and the draft moved
+into `state/workout.ts` beside the pager index and the rest. `display: none` was
+never the easy answer anyway - Chrome resets `scrollTop` when an element is
+hidden that way, which would lose the history scroller's position.
 
 ### What the first test found
 
@@ -701,11 +708,92 @@ why, because the expression looks correct.
 
 ---
 
-## Muscle badges - DONE
+## Workout overview - DONE
 
-The coloured circle from `docs/PROGRESSION.md`, now rendered in the exercise
-header and the strip. It exists because a template is 21 names that mostly begin
-with "Machine" or "Cable", and reading them under a bar is slow.
+Stage 11a, and a shape change rather than a feature. `Start workout` used to
+drop straight into exercise 1 of 10, and moving between exercises was a swipe or
+an accurate tap on a strip of 20 px coloured circles. The workout is now a
+**list you back out to and jump from**: `WorkoutOverview.tsx` is the root while
+a session is live, and `ExerciseView.tsx` - what `ActiveSession.tsx` was - is
+pushed from it.
+
+**The badge strip is gone, and with it two faults measured on device.** Tapping
+a badge more than one exercise away snapped back, because the smooth scroll it
+started dragged intermediate pages through the `IntersectionObserver` and the
+index effect re-targeted the scroll at one of them; and the ring around the
+selected badge was clipped, because a horizontally scrolling container clips on
+both axes. Both were the same mistake - a small moving target asked to act as
+navigation - and neither needed fixing once the target was gone. In its place is
+a segmented progress bar, one segment per exercise, filled as sets are logged
+and lit for the one in view. **Nothing on it is tappable.**
+
+**Home no longer starts a workout on a tap.** Tapping a template pushes a
+read-only preview carrying `Start workout`, so the commitment is its own
+deliberate tap. Read-only because there is nothing to write to: `session_exercises`
+is a snapshot `startSession` takes, so an edit before the start would either
+have no home or would edit the programme, which is the fault the snapshot exists
+to prevent.
+
+**Auto-advance stays.** Logging the last set of an exercise still moves to the
+next incomplete one rather than back to the list. The overview is available, not
+compulsory; two taps per set is the constraint that decides everything.
+
+**The entry draft now lives in `state/workout.ts`**, keyed by session and
+exercise. `nav.ts` had flagged the first push from inside a live workout as
+where the unmount-loses-a-half-typed-weight problem had to be faced; it is no
+longer a first, because the exercise screen is itself pushed and every summary
+and picker takes it down. Only a **touched** draft survives: a pristine one is
+the prefill chain's own answer, which can go stale while the screen is away, so
+it is re-seeded rather than restored.
+
+### The exercise menu is an overlay, not an expanding card
+
+The first version expanded the card in place. On the phone that was wrong twice:
+every card below jumped down as it opened, and on the **last** card the menu
+opened below the fold, so `Remove` had to be scrolled to. `ActionSheet.tsx` is
+the fix - a bottom sheet, identical for the first card and the last, costing the
+list no height.
+
+`PROJECT.md` twice recorded turning down a dialog primitive as "a component
+built to be used once". This is the third call site and the template editor is a
+fourth, so it earns its place now - but it is a **menu**, not a confirm.
+Destructive choices still confirm with a second tap in place, exactly as
+`Discard workout` does.
+
+**`back()` closes an overlay before it pops a screen.** Without that the first
+back gesture after opening a menu would leave the workout entirely - and since
+the overview is the *root*, `back()` would have reported false and the listener
+would have called `exitApp()`. The sheet registers its closer in `nav.ts` and
+clears it on unmount.
+
+### Measured on device, screenshot before every tap
+
+| Step | Measured |
+|---|---|
+| Home into a template | Preview, `Start workout` docked, **no session created** - proved by force-stop and relaunch landing on Home with both templates `not done yet` |
+| Open exercise 9 of 10 from the list | Opens at 9/10, 9th segment lit, prefilled `90 lb × 7` from history. No snap-back |
+| Change the weight, back out, re-open | `100 lb`, not the `90` prefill - the draft survived the unmount |
+| Log a set | Slot 1 rewrote in place, `1/2 sets`, rest pill blue at 1:12, history highlight moved to row 2 in all three cards |
+| Log the second | Auto-advanced 9/10 -> 10/10, pager scrolled, 9th segment filled and 10th lit |
+| `Replace` from the card menu | Trap Bar Deadlift -> Machine Calf Raise (Seated), keeping the slot's `2 × 5-8` and `rest 4:00`. **First time tapped on the phone** - stage 9 left it repo-tested only |
+| `Remove`, two taps | List closed from 10 to 9, no crash |
+| `Move down` | Trap Bar Deadlift went from first to second. Also first tapped here |
+| Menu on the **last** card | Sheet in the same place, fully visible, nothing scrolled |
+| Back with the menu open | Sheet closed, workout still on screen, `topResumedActivity` still loadout |
+| Rest past zero | Pill solid red, counting up - **`PROJECT.md` had this as never verified** |
+
+---
+
+## Exercise identity - DONE
+
+A template is 21 names that mostly begin with "Machine" or "Cable", and reading
+them under a bar is slow, so every exercise carries its muscle group wherever it
+appears - overview card, picker, summary, exercise header.
+
+**The mark is a colour rail and the group's name.** It was a coloured circle
+carrying the group's initial, copied from the reference app, until the three
+candidates were put on the phone side by side against both programme days on
+2026-08-15. See "Choosing the identity mark" below for what that measured.
 
 - `logic/exerciseMuscles.ts` maps **exact exercise name -> group** for all 87.
   A flat table, not a heuristic: `Machine Fly` is chest while `Machine Rear Delt
@@ -714,10 +802,11 @@ with "Machine" or "Cable", and reading them under a bar is slow.
 - `db/seedMuscles.ts` **only fills blanks**, so a hand correction or a future
   exercise editor survives a re-run. Safe to call on every launch.
 - **83 of 87 classified.** The 4 blanks are deliberate: cardio and general
-  mobility have no single primary group, and the neutral `?` circle is the
-  honest answer. Guessing would defeat the point of the colour.
+  mobility have no single primary group. They now render a neutral rail and
+  **no word at all**, where the circle used to insist on a `?`. Guessing would
+  defeat the point of the colour.
 - Unmapped names are **reported, not thrown** - the import prints them, because
-  a `?` badge is cosmetic and should not fail a reconciling import.
+  the mark is cosmetic and should not fail a reconciling import.
 
 **Found by looking at it on the phone:** the first `biceps` colour was a purple
 chosen to sit beside `legs`, and at the 20 px strip size the two were barely
@@ -726,16 +815,34 @@ colour has to work. Biceps is now orange. The rule to keep: no two groups that
 appear on the same day may be close in hue. Biceps was the one colour never
 sampled from Progression, so changing it costs no measurement.
 
-Note two groups share an initial in each direction - Chest/Calves are both `C`,
-Back/Biceps both `B` - exactly as in the reference app. The colour is the
-identity and the letter is the reminder, which is why the badge is never
-monochrome and never letter-only.
+### Choosing the identity mark, measured 2026-08-15
+
+Three candidates were built and rendered at their real sizes against both
+programme days, behind `debug`, and the choice was made by looking. The harness
+was deleted once it had answered.
+
+| Candidate | What the phone showed |
+|---|---|
+| Coloured initial (the reference app's) | `Machine Calf Raise` maroon `C` sits four rows from `Chest Dip` red `C`. Two similar reds, the same letter, and the letter therefore says nothing |
+| Body map: one figure, the worked region filled | Fails at row size, and not for the reason predicted. The grey figure is most of the mark and the lit region is a few pixels, so every row reads as "a small person". `Chest Dip` and `Machine Chest Press` are identical; legs vs calves needs a deliberate look |
+| **Colour rail plus the group's name** | `Machine Preacher Curl` / `BICEPS`. Nothing to decode, nothing to collide, and the rail still gives the row a colour edge at a glance. **Chosen** |
+
+Two things the comparison settled beyond the winner. **The letter was never the
+identity** - Chest/Calves are both `C` and Back/Biceps both `B`, so the colour
+was carrying it alone, which is why `biceps` had already had to be retuned once.
+And the colour is worth keeping as a rail: it is the half that survives being
+glanced at rather than read, and it is the half `docs/PROGRESSION.md` actually
+measured. Saying the group outright also reaches anyone who cannot separate
+these hues without going through a screen reader.
+
+`muscleBadge` is now `muscleMark` and returns the group rather than a letter.
+`MUSCLE_COLORS` is untouched, so nothing measured was lost.
 
 ---
 
 ## How load is made up - `loading`, bar weight, plates
 
-Schema and solver exist and are tested; **nothing renders them yet** (stage 13,
+Schema and solver exist and are tested; **nothing renders them yet** (stage 14,
 renumbered from 7 when the stages were resequenced on 2026-08-13). The design is
 here because it is the part a cold start would otherwise re-derive wrongly.
 
@@ -863,7 +970,7 @@ hour and this paragraph replaced two that had.
 **This inverts at cutover.** Once the real logging starts, the device holds the
 only copy of everything logged natively, and `npm run import` already refuses to
 run the moment any `sets.source = 'native'` row exists. Cutover is one-way. The
-synced-folder export in stage 15 is what has to exist before that line is
+synced-folder export in stage 16 is what has to exist before that line is
 crossed.
 
 Reset with the push above. Verify by opening the app: Home with no in-progress
@@ -901,7 +1008,7 @@ src/
     session.ts      nextIncompleteIndex, sessionTotals (assistance excluded)
     dates.ts        daysBetween, relativeDay - "17 days ago"
     plates.ts       inventory-aware plate solver; the `loading` axis
-    muscles.ts      the eight groups and their colours; muscleBadge
+    muscles.ts      the eight groups and their colours; muscleMark
     exerciseMuscles.ts  exact exercise name -> group, all 87
   db/
     schema.ts       Drizzle schema; source of truth for migrations
@@ -925,20 +1032,26 @@ src/
     restTimer.ts    JS face of the rest-timer plugin
   state/
     queries.ts      TanStack Query over the repo; keys and invalidation
-    nav.ts          the screen stack; back() reports whether it popped
-    workout.ts      pager index and rest, OUTSIDE the screen that renders them
+    nav.ts          the screen stack; back() reports whether it popped, and
+                    closes an open overlay before it pops anything
+    workout.ts      pager index, rest and the entry draft - OUTSIDE the screens
+                    that render them, because all three outlive a push
   ui/
     AppHeader.tsx   app bar; back arrow or the wordmark, and the rest pill
-    Home.tsx        next-up template, start a workout
-    ActiveSession.tsx  THE LOGGING LOOP - header, pager, docked entry bar
-    ExercisePage    (in ActiveSession) one exercise: slots, then history cards
+    Home.tsx        the two templates. Opens one; does NOT start it
+    WorkoutOverview.tsx  the workout as a list, and the root while one is live.
+                    Also renders a template read-only, before `Start workout`
+    ExerciseView.tsx  THE LOGGING LOOP - header, pager, docked entry bar.
+                    Pushed from the overview
+    ExercisePage    (in ExerciseView) one exercise: slots, then history cards
     HistoryCard.tsx one past session, numbered rows, active row lit
     SessionSummary.tsx  what a workout added up to. NOT a save
     ExercisePicker.tsx  87 exercises by recency; add, or swap one out
     EntryField.tsx  one number: step buttons that are also the drag handle,
                     and the number itself as the keypad
     RestPill.tsx    the app-bar countdown; draining fill, red past zero
-    MuscleBadge.tsx the coloured identity circle, header and strip
+    ActionSheet.tsx a menu that floats over the screen instead of growing in it
+    GroupTag.tsx    the identity: a colour rail, and the group said outright
     TimerSpike.tsx  throwaway harness for the timer - behind `debug`
     DbSmoke.tsx     throwaway on-device check of the db layer - same
 scripts/
@@ -1273,6 +1386,29 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
 - **A pushed screen resetting the screen below it is not hypothetical.** `nav.ts`
   flagged it; opening the summary and coming back landed on exercise 1 of 10.
   State that must survive a push now lives in `state/workout.ts`.
+- **An effect that writes a fresh object cannot also depend on it.** The entry
+  draft's re-seed took `draft` as a dependency so that dropping it would re-seed
+  immediately, and wrote a new draft object whenever the stored one was not
+  hand-edited. A pristine draft therefore re-seeded itself forever: React error
+  #185, maximum update depth, and a **blank screen on the phone**. It passed
+  typecheck, lint and 204 tests. The fix is a value comparison before writing -
+  and the weight half goes through `weightsEqual`, never `===`, because a stored
+  weight against a freshly computed one is exactly the shape `units.ts` warns
+  about. The general lesson is the one this file keeps relearning: the device
+  step is not a formality, and a green test suite is not a rendered screen.
+- **Two effects in sequence are not one effect.** Opening exercise 9 of 10 from
+  the overview landed on **2 of 10**. One layout effect wrote the requested index
+  into the store and a second positioned the pager - but the second read `index`
+  from a render that had not seen the first, positioned at page 0, and the
+  `IntersectionObserver` then claimed page 0 as the truth. This is the same race
+  the badge strip had, arriving at mount instead of on a tap. Fixed by doing both
+  in one effect from one source: `openAt` is the authority, the store and the
+  scroll position are written together, and there is no window in between.
+- **"`Move earlier` / `Move later` are pointless now there is a list" was
+  wrong**, and was called wrong the same day it shipped. Jumping changes where
+  you are; reordering changes what the workout *is*, and only the second survives
+  to the summary. They are back, as `Move up` / `Move down` in the exercise
+  menu, and `reorderSessionExercises` finally has a caller that has been tapped.
 - **`npm run import` had the export filename hard-coded.** It happened to be the
   newest one, so nothing was wrong - but a fresh export would have been ignored
   while the reconciliation still reported OK against the older file. It now takes
@@ -1391,9 +1527,10 @@ destroyed instead (`settings put global always_finish_activities 1`, background,
 return) loses the JS context while the service carries on, which is the faithful
 version of it. Restore the setting to `0` afterwards.
 
-**Not verified this session:** the red count-up past zero, which needs a
-four-minute wait. It is the same `over` branch that `RestBar` rendered correctly
-before, and the native bubble does its own count-up independently.
+~~**Not verified this session:** the red count-up past zero.~~ **Verified
+2026-08-15**, incidentally, while testing the overview: a 1:15 rest ran out
+mid-tapping and the pill went solid red and counted up, through `0:08`, `0:42`
+and `1:49`, never auto-dismissing.
 
 **A correction found by measuring:** the first version left a bare icon in the
 idle slot, and the exercise header still moved about 11 device px when a rest
@@ -1412,15 +1549,23 @@ mid-workout exercise editing and an exercise library. The ordering principle
 chosen was **workout flow first**: one workout has to feel right end to end
 before the app grows more screens.
 
-Stages 0 to 10 are **done and verified on device**: the pre-migration backup, the
-palette, all the pure logic, repo and schema groundwork, the docked entry bar,
-the navigation shell, weight beside reps, pre-created set slots, the swipe pager
-and aligned history, auto-advance and the summary, the session plan snapshot with
-the picker and a real `Add set`, and the rest timer as an app-bar pill.
+**Resequenced again on 2026-08-15**, against notes taken while using the app on
+the phone. Those notes were workout flow - two real strip bugs, a menu that
+moved the list, Home starting a workout by accident - and the ordering principle
+above says workout flow comes first, so they became stage 11 and the exercise
+library moved back. The stage numbers below are the new ones.
 
-**A workout now runs end to end**: start it, swipe between exercises, log against
-five years of history, correct anything, add or cut exercises and sets, and
-finish on a summary that says what it came to.
+Stages 0 to 11a are **done and verified on device**: the pre-migration backup,
+the palette, all the pure logic, repo and schema groundwork, the docked entry
+bar, the navigation shell, weight beside reps, pre-created set slots, the swipe
+pager and aligned history, auto-advance and the summary, the session plan
+snapshot with the picker and a real `Add set`, the rest timer as an app-bar
+pill, and the workout overview with the new exercise identity.
+
+**A workout now runs end to end**: open a template without starting it, start
+it, jump between exercises from the list or swipe between neighbours, log
+against five years of history, correct anything, reorder, add or cut exercises
+and sets, and finish on a summary that says what it came to.
 
 Each stage is independently shippable. Prove each on the phone before starting
 the next - screenshot before every tap.
@@ -1442,7 +1587,19 @@ the next - screenshot before every tap.
     verified on device** - see "The in-app face is a pill in the app bar" above.
     `RestBar.tsx` is deleted. The red count-up past zero was not re-verified on
     device this time.
-11. **Exercise library and exercise detail.** Guidance ships as a static table
+11a. ~~**Workout overview, the exercise identity, and the logging-screen
+    notes.**~~ **Done and verified on device** - see "Workout overview" and
+    "Exercise identity" above.
+11b. **The entry bar and the rest pill.** Tapping a history row loads that set's
+    weight and reps into the entry fields without logging anything. The rest
+    pill gains an editor: tap while counting down for `−30` / `+30` on the
+    running clock, tap while **red** to cancel, which is the only state where
+    killing the timer is what the tap means. No stopwatch. The entry bar takes
+    less height, so the workout gets more of the screen -
+    **re-measure the taps and drags afterwards**, since `SCRUB_PX_PER_STEP` is
+    in CSS pixels and any geometry change can break a correct measurement. Hide
+    the `debug` link while here; it is cheap and it is reachable in a demo.
+12. **Exercise library and exercise detail.** Guidance ships as a static table
     keyed by exact exercise name, exactly like `logic/exerciseMuscles.ts`,
     seeded into the database by a **fill-blanks** seeder like `seedMuscles.ts`
     so a hand edit survives a re-run. Migration 0006. Author the 21 programme
@@ -1451,25 +1608,25 @@ the next - screenshot before every tap.
     history, one statement, no query in a loop. **`load_mode = 'assistance'`
     inverts** - 420 imported sets record assistance, where a higher number is an
     easier set, so a naive "best" reads backwards.
-12. **Template editor.** The insight worth copying is **reuse**: the reference
+13. **Template editor.** The insight worth copying is **reuse**: the reference
     app mounts the same per-exercise editor in the live workout and in the
     template, which is what stops the two drifting. Add / remove / reorder,
     rep-range, sets and rest editing. The rep-range columns already exist and
     are populated; nothing can edit them, which is the whole gap. Must write
     `seedPlanTemplates`-shaped soft deletes, never hard ones, and must never
     re-read `plan.ts` at runtime or an edit is silently undone on next launch.
-13. **Plate chips**, rendering `platesFor` above the entry fields and
+14. **Plate chips**, rendering `platesFor` above the entry fields and
     recomputing on every keystroke and scrub tick. Gated on `loading` being
     plate-loaded, so **populating `loading` and the `plate_inventory` /
     `app_settings` rows is part of this stage** - all three are empty today.
     See "How load is made up".
-14. **The settings that matter in a gym**: `Increment (Weight)`, `Keep screen on
+15. **The settings that matter in a gym**: `Increment (Weight)`, `Keep screen on
     while training`, a toggle for the overlay bubble, and rest `Vibrate` /
     `Sound`. Columns already exist in `app_settings`.
 
 Then, still blocking cutover:
 
-15. **Backups, and the cutover procedure itself.**
+16. **Backups, and the cutover procedure itself.**
     - `VACUUM INTO` to a synced folder on launch and after each session, plus a
       manual export. App-private storage does not survive uninstall, which is
       the actual threat.
@@ -1484,7 +1641,7 @@ Then, still blocking cutover:
     - Write down the cutover itself: push the final imported database, verify
       counts on device, then stop re-importing forever. `npm run import` already
       refuses once any `sets.source = 'native'` row exists.
-16. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
+17. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
     plus the `debug` screen in `App.tsx`. `DbSmoke` is still the only on-device
     proof of the `DENSE_RANK` window function `recentPerformance` depends on, so
     it earns its place until that is retired or proved another way. The `debug`
@@ -1495,7 +1652,7 @@ Then, still blocking cutover:
 
 - Progression cue is currently advisory text only. It could pre-fill the next
   session's weight, which is the natural payoff of `shouldIncreaseLoad`.
-- Progress and statistics views. Stage 11 gives one exercise its full history,
+- Progress and statistics views. Stage 12 gives one exercise its full history,
   which is the first thing to read the five years back at all, but there is
   still nothing that looks across exercises or over time.
 - ~~`npm run dev` runs against an empty jeep-sqlite database.~~ **Done.**
@@ -1513,7 +1670,10 @@ Then, still blocking cutover:
   notes. Exercise names come from `plan.ts`, which is committed.
 - **Home is still two template buttons.** The database holds 343 sessions and
   6,206 sets and no screen shows any of it, which is the first thing anyone
-  opening the app sees.
+  opening the app sees. Stage 11a only changed what a tap on them *does*.
+- **Long-press to drag and reorder**, on the overview and later in the template
+  editor. `Move up` / `Move down` cover the case; dragging would cover it in one
+  gesture instead of one per place. Wanted, not needed.
 
 ### Phase-1 details already settled
 
@@ -1525,7 +1685,7 @@ Then, still blocking cutover:
 - Only `load_mode` is needed at import, and only for 4 exercises - a five-minute
   file. `modality`, `primary_muscle`, `loading` stay nullable and get filled in
   lazily. `primary_muscle` is now 83 of 87; `modality` and `loading` are still
-  empty, and **stage 13** needs `loading`.
+  empty, and **stage 14** needs `loading`.
 - Vitest for tests; `db/*` and `Examples/` gitignored
 - App id `com.groenewold.loadout` - baked in at `cap init`; changing it orphans
   the on-device database

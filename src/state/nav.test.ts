@@ -14,7 +14,7 @@ const spikes: Screen = { kind: 'spikes' }
 const nav = () => useNav.getState()
 
 beforeEach(() => {
-  useNav.setState({ stack: [] })
+  useNav.setState({ stack: [], dismiss: null })
 })
 
 describe('nav stack', () => {
@@ -62,5 +62,44 @@ describe('nav stack', () => {
     nav().push(spikes)
     expect(nav().stack).not.toBe(before)
     expect(before).toHaveLength(1)
+  })
+})
+
+describe('an overlay takes back before the stack does', () => {
+  it('closes the overlay and leaves the stack alone', () => {
+    nav().push(spikes)
+    let closed = false
+    nav().setDismiss(() => {
+      closed = true
+    })
+
+    expect(nav().back()).toBe(true)
+    expect(closed).toBe(true)
+    // The screen under the menu is still there. Closing a menu is not leaving
+    // the screen it was opened from.
+    expect(nav().stack).toEqual([spikes])
+    expect(nav().dismiss).toBeNull()
+  })
+
+  it('handles back AT THE ROOT, so a menu cannot exit the app', () => {
+    // The case this exists for: the workout overview IS the root, so without
+    // this `back()` would report false and the listener would call exitApp -
+    // losing the workout screen to a menu opened by mistake.
+    nav().setDismiss(() => {})
+    expect(nav().back()).toBe(true)
+  })
+
+  it('stops swallowing the gesture once the overlay is gone', () => {
+    nav().setDismiss(() => {})
+    nav().back()
+    expect(nav().back()).toBe(false)
+  })
+
+  it('is cleared by reset, so a stale closer cannot outlive its screen', () => {
+    nav().push(spikes)
+    nav().setDismiss(() => {})
+    nav().reset()
+    expect(nav().dismiss).toBeNull()
+    expect(nav().back()).toBe(false)
   })
 })

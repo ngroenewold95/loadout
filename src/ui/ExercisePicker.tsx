@@ -18,7 +18,7 @@ import {
 import { relativeDay } from '../logic/dates.ts'
 import { localDateOf } from '../db/repo.ts'
 import { useNav } from '../state/nav.ts'
-import { MuscleBadge } from './MuscleBadge.tsx'
+import { GroupRail, GroupWord } from './GroupTag.tsx'
 
 /**
  * The picker wired to a live workout.
@@ -99,20 +99,23 @@ export function ExercisePicker({ excludeIds = [], onPick }: Props) {
                 type="button"
                 disabled={already}
                 onClick={() => onPick(exercise.id)}
-                className="bg-surface-1 active:bg-surface-3 flex items-center gap-3 rounded-xl px-3 py-3 text-left disabled:opacity-40"
+                className="bg-surface-1 active:bg-surface-3 flex items-stretch gap-3 rounded-xl px-3 py-3 text-left disabled:opacity-40"
               >
-                <MuscleBadge primaryMuscle={exercise.primaryMuscle} size="sm" />
+                <GroupRail primaryMuscle={exercise.primaryMuscle} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{exercise.name}</span>
-                  <span className="text-text-dim block text-xs">
-                    {already
-                      ? 'already in this workout'
-                      : exercise.lastPerformedAtUtc == null
-                        ? 'never performed'
-                        : `${relativeDay(
-                            localDateOf(new Date(exercise.lastPerformedAtUtc)),
-                            today,
-                          )} · ${exercise.setCount} sets`}
+                  <span className="flex items-baseline gap-2">
+                    <GroupWord primaryMuscle={exercise.primaryMuscle} />
+                    <span className="text-text-dim text-xs">
+                      {already
+                        ? 'already in this workout'
+                        : exercise.lastPerformedAtUtc == null
+                          ? 'never performed'
+                          : `${relativeDay(
+                              localDateOf(new Date(exercise.lastPerformedAtUtc)),
+                              today,
+                            )} · ${exercise.setCount} sets`}
+                    </span>
                   </span>
                 </span>
               </button>

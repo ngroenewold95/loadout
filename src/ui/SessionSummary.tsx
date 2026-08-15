@@ -25,7 +25,7 @@ import { relativeDay } from '../logic/dates.ts'
 import { sessionTotals } from '../logic/session.ts'
 import { localDateOf } from '../db/repo.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
-import { MuscleBadge } from './MuscleBadge.tsx'
+import { GroupRail } from './GroupTag.tsx'
 
 interface Props {
   sessionId: number
@@ -121,8 +121,8 @@ export function SessionSummary({ sessionId }: Props) {
         <div className="mt-4 flex flex-col gap-2">
           {byExercise.map((group) => (
             <div key={group.exerciseId} className="bg-surface-1 rounded-xl px-3 py-2">
-              <div className="flex items-center gap-2">
-                <MuscleBadge primaryMuscle={group.primaryMuscle} size="sm" />
+              <div className="flex items-stretch gap-3">
+                <GroupRail primaryMuscle={group.primaryMuscle} />
                 <span className="truncate font-medium">{group.name}</span>
                 <span className="text-text-dim ml-auto shrink-0 text-sm tabular-nums">
                   {group.sets.length} {group.sets.length === 1 ? 'set' : 'sets'}

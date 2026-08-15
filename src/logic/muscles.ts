@@ -2,20 +2,21 @@
  * Muscle groups, and the colour each one wears.
  *
  * This exists because a template is a list of 21 names that all begin with
- * "Machine" or "Cable". Progression makes that list scannable by giving every
- * exercise a coloured circle with its group's initial, and using the *same*
- * circle in the picker, the workout and the template, so an exercise has one
- * visual identity everywhere. See `docs/PROGRESSION.md`.
+ * "Machine" or "Cable". Giving every exercise its group, in the same form in
+ * the picker, the workout and the summary, is what makes that list scannable:
+ * the exercise is recognised rather than read.
  *
- * `exercises.primary_muscle` is nullable free text and is currently unpopulated
- * for all 86 rows, so `muscleBadge` has to degrade rather than assume. There is
- * deliberately no CHECK constraint on the column: adding one would force a table
- * rebuild, which `PROJECT.md` records as the migration shape that has already
- * produced broken SQL here.
+ * **The mark is a colour and the group's name**, not a lettered circle - see
+ * `ui/GroupTag.tsx`. The circle came from the reference app and was compared
+ * against two alternatives on the phone; it lost on the fault it always had,
+ * that Chest and Calves are both `C` and Back and Biceps both `B`, so the
+ * letter said nothing and two similar reds four rows apart had to carry the
+ * whole identity. The colours below are the measured part and are unchanged.
  *
- * Two groups share an initial - Chest and Calves are both `C` - exactly as they
- * do in the reference app. The colour is what disambiguates them, which is why
- * the initial alone is never enough and the circle is never monochrome.
+ * `exercises.primary_muscle` is nullable free text, so `muscleMark` has to
+ * degrade rather than assume. There is deliberately no CHECK constraint on the
+ * column: adding one would force a table rebuild, which `PROJECT.md` records as
+ * the migration shape that has already produced broken SQL here.
  */
 
 export const MUSCLES = [
@@ -56,12 +57,13 @@ export const MUSCLE_COLORS: Record<Muscle, string> = {
   abs: '#00793B',
 }
 
-/** Neutral circle for an exercise whose group is unknown, matching the `?`
- *  avatar Progression shows for an unconfigured program day. */
-const UNKNOWN = { initial: '?', color: '#424655' } as const
+/** What an exercise with no group wears. Never a guessed colour: four of the
+ *  87 are deliberately unclassified, and cardio has no primary group to state. */
+export const UNKNOWN_COLOR = '#424655'
 
-export interface MuscleBadge {
-  initial: string
+export interface MuscleMark {
+  /** Null when the column is empty or holds something outside `MUSCLES`. */
+  muscle: Muscle | null
   color: string
 }
 
@@ -70,15 +72,17 @@ function isMuscle(value: string): value is Muscle {
 }
 
 /**
- * The circle to draw for an exercise.
+ * The identity to draw for an exercise.
  *
  * Accepts whatever is in the column, including `null` and values that are not
  * in `MUSCLES`, because the column is free text and mostly empty. Matching is
  * case-insensitive and trims, so a hand-typed `"Back "` still lands.
+ *
+ * Returns the group itself rather than a letter, because the UI now writes the
+ * word out. A letter was only ever a compression of this, and a lossy one.
  */
-export function muscleBadge(primaryMuscle: string | null | undefined): MuscleBadge {
-  if (!primaryMuscle) return { ...UNKNOWN }
-  const key = primaryMuscle.trim().toLowerCase()
-  if (!isMuscle(key)) return { ...UNKNOWN }
-  return { initial: key.charAt(0).toUpperCase(), color: MUSCLE_COLORS[key] }
+export function muscleMark(primaryMuscle: string | null | undefined): MuscleMark {
+  const key = primaryMuscle?.trim().toLowerCase() ?? ''
+  if (!key || !isMuscle(key)) return { muscle: null, color: UNKNOWN_COLOR }
+  return { muscle: key, color: MUSCLE_COLORS[key] }
 }

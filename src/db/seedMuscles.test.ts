@@ -11,7 +11,7 @@ import { seedExerciseMuscles } from './seedMuscles.ts'
 import { seedPlanTemplates } from './seedPlan.ts'
 import { listTemplates, listTemplateExercises } from './repo.ts'
 import { MUSCLE_BY_EXERCISE } from '../logic/exerciseMuscles.ts'
-import { MUSCLES, muscleBadge } from '../logic/muscles.ts'
+import { MUSCLES, muscleMark } from '../logic/muscles.ts'
 import { NEW_EXERCISES, PLAN } from '../logic/plan.ts'
 
 const MIGRATIONS = loadMigrations()
@@ -102,16 +102,16 @@ describe('seedExerciseMuscles', () => {
   })
 })
 
-describe('the badge reaches the template rows', () => {
-  it('gives every exercise on both days a coloured circle, never "?"', async () => {
+describe('the group reaches the template rows', () => {
+  it('names a group for every exercise on both days, never a blank', async () => {
     await seedPlanTemplates(db)
     await seedExerciseMuscles(db)
 
     const templates = await listTemplates(db)
     for (const template of templates) {
       for (const row of await listTemplateExercises(db, template.id)) {
-        const badge = muscleBadge(row.primaryMuscle)
-        expect(badge.initial, `${row.name} rendered as unknown`).not.toBe('?')
+        const mark = muscleMark(row.primaryMuscle)
+        expect(mark.muscle, `${row.name} rendered as unknown`).not.toBeNull()
       }
     }
   })

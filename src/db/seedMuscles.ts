@@ -28,7 +28,7 @@ export interface MuscleSeedResult {
 export async function seedExerciseMuscles(db: Db): Promise<MuscleSeedResult> {
   const assignments = Object.entries(MUSCLE_BY_EXERCISE).filter(
     // A deliberate `null` is not an assignment; leaving the column empty is
-    // what makes `muscleBadge` render the honest `?` circle.
+    // what makes the identity mark stay blank rather than claim a group.
     (entry): entry is [string, NonNullable<(typeof entry)[1]>] => entry[1] !== null,
   )
 
