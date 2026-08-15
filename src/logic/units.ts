@@ -73,6 +73,25 @@ export function formatWeight(kg: number, unit: Unit): string {
 }
 
 /**
+ * Format a large total for display, shortened.
+ *
+ * Only for lifetime and multi-session totals: five years of history is
+ * 7,543,590 lb, which `formatWeight` renders as a seven-digit run that nobody
+ * reads as a number. A single session stays on `formatWeight`, where the figure
+ * is four or five digits and the exact value is the point.
+ *
+ * The threshold is 10,000 rather than 1,000 because a four-digit session volume
+ * is still read at a glance, and `5.7k lb` would be a worse rendering of it.
+ */
+export function compactWeight(kg: number, unit: Unit): string {
+  const v = fromKg(kg, unit)
+  const abs = Math.abs(v)
+  if (abs >= 1_000_000) return `${round(v / 1_000_000, 1)}M`
+  if (abs >= 10_000) return `${Math.round(v / 1000)}k`
+  return formatWeight(kg, unit)
+}
+
+/**
  * Compare two weights in kg. Always use this rather than `===`.
  *
  * Both sides are snapped to the storage grid before comparing, so a value read

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { daysBetween, relativeDay } from './dates.ts'
+import { daysAgo, daysBetween, relativeDay, startOfWeek } from './dates.ts'
 
 describe('daysBetween', () => {
   it('counts whole days', () => {
@@ -47,5 +47,31 @@ describe('relativeDay', () => {
     // "in 3 days" about something already logged would be worse than saying
     // nothing useful.
     expect(relativeDay('2026-08-20', '2026-08-13')).toBe('today')
+  })
+})
+
+describe('daysAgo', () => {
+  it('walks back across month and year ends', () => {
+    expect(daysAgo('2026-08-15', 0)).toBe('2026-08-15')
+    expect(daysAgo('2026-08-15', 27)).toBe('2026-07-19')
+    expect(daysAgo('2026-01-01', 1)).toBe('2025-12-31')
+  })
+
+  it('leaves an unparseable date alone', () => {
+    // A bad boundary can then only widen a query, never silently shift it.
+    expect(daysAgo('not-a-date', 7)).toBe('not-a-date')
+  })
+})
+
+describe('startOfWeek', () => {
+  it('finds the Monday, including from the Monday itself', () => {
+    // 2026-08-15 is a Saturday, 2026-08-10 the Monday before it.
+    expect(startOfWeek('2026-08-15')).toBe('2026-08-10')
+    expect(startOfWeek('2026-08-10')).toBe('2026-08-10')
+  })
+
+  /** Sunday is the end of its week here, not the start of the next one. */
+  it('treats Sunday as six days in', () => {
+    expect(startOfWeek('2026-08-16')).toBe('2026-08-10')
   })
 })

@@ -8,6 +8,7 @@ import { AppHeader } from './ui/AppHeader'
 import { Home } from './ui/Home'
 import { SessionSummary } from './ui/SessionSummary'
 import { SessionExercisePicker } from './ui/ExercisePicker'
+import { AllWorkouts } from './ui/WorkoutHistory'
 import { RestPill } from './ui/RestPill'
 import { DbSmoke } from './ui/DbSmoke'
 import { TimerSpike } from './ui/TimerSpike'
@@ -32,6 +33,7 @@ const SCREEN_TITLES: Record<Screen['kind'], string> = {
   // day name, the exercise's name - so the bar says what kind of thing it is.
   template: 'Workout',
   exercise: 'Exercise',
+  history: 'Workouts',
 }
 
 function Shell() {
@@ -97,6 +99,8 @@ function Shell() {
           />
         ) : screen?.kind === 'template' ? (
           <TemplatePreview templateId={screen.templateId} />
+        ) : screen?.kind === 'history' ? (
+          <AllWorkouts />
         ) : isLoading ? (
           <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
         ) : screen?.kind === 'exercise' && session ? (

@@ -18,9 +18,12 @@ import {
   replaceSessionExercise,
   endSession,
   deleteSet,
+  historyStats,
   recentPerformance,
+  setsByMuscle,
   updateSet,
   listSessionExercises,
+  listSessionHistory,
   listSessionSets,
   listTemplates,
   listTemplateExercises,
@@ -32,6 +35,7 @@ import {
   startSession,
   undoLastSet,
 } from './repo.ts'
+import { sessionTotals } from '../logic/session.ts'
 
 const MIGRATIONS = loadMigrations()
 
@@ -54,7 +58,7 @@ async function seedExercise(
 async function seedHistory(
   exerciseId: number,
   localDate: string,
-  sets: { weightKg: number; reps: number }[],
+  sets: { weightKg: number | null; reps: number | null; loadMode?: string }[],
   name = 'Day 1',
 ): Promise<number> {
   const startedAt = Date.parse(`${localDate}T17:00:00Z`)
@@ -68,8 +72,19 @@ async function seedHistory(
     await db.exec(
       `INSERT INTO sets (session_id, exercise_id, order_index, set_index, performed_at_utc,
                          weight_kg, reps, load_mode, set_type, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'total', 'working', 'native', ?, ?)`,
-      [sessionId, exerciseId, i, i, startedAt + i * 180_000, s.weightKg, s.reps, now, now],
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'working', 'native', ?, ?)`,
+      [
+        sessionId,
+        exerciseId,
+        i,
+        i,
+        startedAt + i * 180_000,
+        s.weightKg,
+        s.reps,
+        s.loadMode ?? 'total',
+        now,
+        now,
+      ],
     )
   }
   return sessionId
@@ -722,6 +737,121 @@ describe('templates and picker', () => {
         [templateId, squat, now, now],
       ),
     ).rejects.toThrow(/CHECK constraint/i)
+  })
+
+  it('lists finished sessions newest first, with their totals', async () => {
+    const squat = await seedExercise('Squat')
+    const press = await seedExercise('Press')
+    await seedHistory(squat, '2026-07-01', [{ weightKg: 100, reps: 5 }])
+    const recent = await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+    await db.exec(
+      `INSERT INTO sets (session_id, exercise_id, order_index, set_index,
+                         weight_kg, reps, load_mode, set_type, source, created_at, updated_at)
+       VALUES (?, ?, 2, 0, 40, 10, 'total', 'working', 'native', ?, ?)`,
+      [recent, press, Date.now(), Date.now()],
+    )
+
+    const history = await listSessionHistory(db, { limit: 10 })
+    expect(history.map((s) => s.localDate)).toEqual(['2026-07-15', '2026-07-01'])
+    expect(history[0]).toMatchObject({
+      setCount: 3,
+      exerciseCount: 2,
+      volumeKg: 100 * 5 + 100 * 5 + 40 * 10,
+    })
+
+    // Paging is limit/offset, so the second page continues rather than repeats.
+    const page2 = await listSessionHistory(db, { limit: 1, offset: 1 })
+    expect(page2.map((s) => s.localDate)).toEqual(['2026-07-01'])
+  })
+
+  it('keeps the live workout out of its own history', async () => {
+    const squat = await seedExercise('Squat')
+    const sessionId = await startSession(db, { name: 'Day 1' })
+    await logSet(db, { sessionId, exerciseId: squat, weightKg: 100, reps: 5 })
+
+    expect(await listSessionHistory(db, { limit: 10 })).toEqual([])
+    await endSession(db, sessionId)
+    expect(await listSessionHistory(db, { limit: 10 })).toHaveLength(1)
+  })
+
+  /**
+   * The rule this pins: volume in SQL and volume in TypeScript must agree.
+   *
+   * `sessionTotals` is the authority - it is what the summary screen renders and
+   * where the assistance argument is written down. The SQL exists only because a
+   * list of sessions cannot pull every set across the bridge to reuse it, so the
+   * two are held together here rather than by hoping they were written the same.
+   */
+  it('totals volume in SQL exactly as sessionTotals does', async () => {
+    const chinup = await seedExercise('Assisted Chinup', { loadMode: 'assistance' })
+    const squat = await seedExercise('Squat')
+    const sessionId = await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5 },
+      // Assistance INVERTS: a higher number is an easier set, so it is excluded
+      // from volume rather than added to it.
+      { weightKg: 25, reps: 8, loadMode: 'assistance' },
+      // A bodyweight set carries no weight at all and contributes nothing.
+      { weightKg: null, reps: 12 },
+    ])
+    await db.exec('UPDATE sets SET exercise_id = ? WHERE load_mode = ?', [
+      chinup,
+      'assistance',
+    ])
+
+    const [row] = await listSessionHistory(db, { limit: 1 })
+    const totals = sessionTotals(await listSessionSets(db, sessionId))
+
+    expect(row.volumeKg).toBe(totals.volumeKg)
+    expect(row.volumeKg).toBe(500)
+    expect(row.setCount).toBe(totals.sets)
+  })
+
+  it('reports lifetime totals and cadence from one statement', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-06-01', [{ weightKg: 100, reps: 5 }])
+    await seedHistory(squat, '2026-07-14', [{ weightKg: 100, reps: 5 }])
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+
+    const stats = await historyStats(db, {
+      weekStart: '2026-07-13',
+      fourWeeksAgo: '2026-06-18',
+    })
+    expect(stats).toMatchObject({
+      sessions: 3,
+      sets: 4,
+      volumeKg: 2000,
+      thisWeek: 2,
+      last28: 2,
+      firstDate: '2026-06-01',
+      lastDate: '2026-07-15',
+    })
+    // Each seeded session is an hour long, and the join-free subqueries are what
+    // keep this from being multiplied by the number of sets in each.
+    expect(stats?.trainedMs).toBe(3 * 3_600_000)
+  })
+
+  it('counts sets per muscle group, keeping the unclassified separate', async () => {
+    const squat = await seedExercise('Squat')
+    const bike = await seedExercise('Bike')
+    await db.exec('UPDATE exercises SET primary_muscle = ? WHERE id = ?', ['legs', squat])
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+    await seedHistory(bike, '2026-07-15', [{ weightKg: null, reps: 20 }])
+
+    expect(await setsByMuscle(db, '2026-07-01')).toEqual([
+      { muscle: 'legs', sets: 2 },
+      { muscle: null, sets: 1 },
+    ])
+    // The window is a filter, not a suggestion.
+    expect(await setsByMuscle(db, '2026-08-01')).toEqual([])
   })
 
   it('orders the picker by most recently performed, then name', async () => {

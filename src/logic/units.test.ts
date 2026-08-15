@@ -5,6 +5,7 @@ import {
   formatWeight,
   roundForDisplay,
   weightsEqual,
+  compactWeight,
   LB_TO_KG,
 } from './units'
 
@@ -91,5 +92,16 @@ describe('kg entry', () => {
     for (const kg of [20, 60, 100, 102.5, 2.5]) {
       expect(formatWeight(toKg(kg, 'kg'), 'kg')).toBe(String(kg))
     }
+  })
+})
+
+describe('compactWeight', () => {
+  it('shortens only what is too long to read', () => {
+    // Five years of history, the figure the import reconciled exactly.
+    expect(compactWeight(toKg(7_543_590, 'lb'), 'lb')).toBe('7.5M')
+    expect(compactWeight(toKg(184_000, 'lb'), 'lb')).toBe('184k')
+    // A session volume stays exact: four digits are read at a glance, and
+    // "5.7k lb" would be a worse rendering of 5,680.
+    expect(compactWeight(toKg(5680, 'lb'), 'lb')).toBe('5680')
   })
 })

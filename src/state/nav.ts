@@ -60,6 +60,8 @@ export type Screen =
    * pager moves from there, and `state/workout.ts` owns the position.
    */
   | { kind: 'exercise'; sessionId: number; index: number }
+  /** Every finished workout, newest first. Rows open the summary. */
+  | { kind: 'history' }
 
 interface NavState {
   /** Root first. Empty means the root screen, which is not a member. */

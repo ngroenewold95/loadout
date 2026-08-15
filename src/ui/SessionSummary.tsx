@@ -26,6 +26,7 @@ import { sessionTotals } from '../logic/session.ts'
 import { localDateOf } from '../db/repo.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 import { GroupRail } from './GroupTag.tsx'
+import { Stat } from './Stat.tsx'
 
 interface Props {
   sessionId: number
@@ -169,18 +170,6 @@ export function SessionSummary({ sessionId }: Props) {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function Stat({ label, value, unit }: { label: string; value: string; unit?: Unit }) {
-  return (
-    <div className="bg-surface-1 rounded-xl px-3 py-3">
-      <p className="text-text-dim text-xs tracking-wide uppercase">{label}</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums">
-        {value}
-        {unit && <span className="text-text-dim ml-1 text-sm font-normal">{unit}</span>}
-      </p>
     </div>
   )
 }

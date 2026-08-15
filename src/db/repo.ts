@@ -933,3 +933,154 @@ export function prefillFor(
     source: inSession ? 'current-session' : 'last-session',
   }
 }
+
+// ------------------------------------------------------- history and totals
+
+/**
+ * Volume, as one SQL expression, defined once.
+ *
+ * **`assistance` sets contribute nothing rather than being summed.** 420 sets in
+ * the imported history record machine assistance, where a *higher* number is an
+ * easier set, so adding them would make getting stronger read as decline. This
+ * is the same rule `sessionTotals` in `logic/session.ts` applies in TypeScript,
+ * and the two are held together by a conformance test in `repo.test.ts` rather
+ * than by hoping - a screen totalling a list of sessions cannot pull every set
+ * across the bridge to reuse the pure version.
+ *
+ * Expects the sets table aliased `s`.
+ */
+const VOLUME_KG = `SUM(CASE
+          WHEN s.load_mode = 'assistance' THEN 0
+          WHEN s.weight_kg IS NULL OR s.reps IS NULL THEN 0
+          ELSE s.weight_kg * s.reps END)`
+
+/** Finished sessions only. The live workout is not part of its own history. */
+const FINISHED = `ses.ended_at_utc IS NOT NULL AND ses.deleted_at IS NULL`
+
+export interface SessionHistoryRow extends SessionRow {
+  setCount: number
+  exerciseCount: number
+  /** Null only for a session with no surviving sets - see the LEFT JOIN. */
+  volumeKg: number | null
+}
+
+/**
+ * Past workouts, newest first, with what each one came to.
+ *
+ * `LEFT JOIN` so a session whose sets were all deleted still lists rather than
+ * silently disappearing; its counts come back zero and its volume null.
+ *
+ * Paged rather than unbounded: there are 343 sessions today and Home shows five
+ * of them. The caller grows `limit` instead of chasing a cursor, because the
+ * database is a local file and re-reading 50 rows costs less than the code to
+ * avoid it would.
+ */
+export function listSessionHistory(
+  db: Db,
+  opts: { limit: number; offset?: number } = { limit: 20 },
+): Promise<SessionHistoryRow[]> {
+  return db.query<SessionHistoryRow>(
+    `SELECT ses.id,
+            ses.name,
+            ses.started_at_utc AS "startedAtUtc",
+            ses.ended_at_utc AS "endedAtUtc",
+            ses.local_date AS "localDate",
+            ses.template_id AS "templateId",
+            ses.notes,
+            COUNT(s.id) AS "setCount",
+            COUNT(DISTINCT s.exercise_id) AS "exerciseCount",
+            ${VOLUME_KG} AS "volumeKg"
+       FROM sessions ses
+       LEFT JOIN sets s ON s.session_id = ses.id AND s.deleted_at IS NULL
+      WHERE ${FINISHED}
+      GROUP BY ses.id
+      ORDER BY ses.started_at_utc DESC, ses.id DESC
+      LIMIT ? OFFSET ?`,
+    [opts.limit, opts.offset ?? 0],
+  )
+}
+
+export interface HistoryStats {
+  sessions: number
+  sets: number
+  volumeKg: number | null
+  /** Summed session durations, in ms. Null before anything is finished. */
+  trainedMs: number | null
+  thisWeek: number
+  /** Sessions in the last 28 days, which the UI divides by four. */
+  last28: number
+  firstDate: string | null
+  lastDate: string | null
+}
+
+/**
+ * Everything Home says about training as a whole, in one statement.
+ *
+ * **Scalar subqueries, deliberately not a join.** Joining sets to sessions
+ * repeats each session once per set, so `COUNT(*)` over that would report sets
+ * where it claims sessions and `SUM(ended - started)` would multiply every
+ * duration by the number of sets in it. Each subquery below stands alone and can
+ * be read on its own terms.
+ *
+ * Both date boundaries are computed by the caller (`logic/dates.ts`) and passed
+ * as parameters. `local_date` is a string here, so date arithmetic belongs where
+ * there is a calendar rather than in SQLite's date functions.
+ */
+export function historyStats(
+  db: Db,
+  bounds: { weekStart: string; fourWeeksAgo: string },
+): Promise<HistoryStats | null> {
+  return db.queryOne<HistoryStats>(
+    `SELECT
+       (SELECT COUNT(*) FROM sessions ses WHERE ${FINISHED}) AS "sessions",
+       (SELECT COUNT(*) FROM sets s
+          JOIN sessions ses ON ses.id = s.session_id
+         WHERE s.deleted_at IS NULL AND ${FINISHED}) AS "sets",
+       (SELECT ${VOLUME_KG} FROM sets s
+          JOIN sessions ses ON ses.id = s.session_id
+         WHERE s.deleted_at IS NULL AND ${FINISHED}) AS "volumeKg",
+       (SELECT SUM(ses.ended_at_utc - ses.started_at_utc) FROM sessions ses
+         WHERE ${FINISHED}) AS "trainedMs",
+       (SELECT COUNT(*) FROM sessions ses
+         WHERE ${FINISHED} AND ses.local_date >= ?) AS "thisWeek",
+       (SELECT COUNT(*) FROM sessions ses
+         WHERE ${FINISHED} AND ses.local_date >= ?) AS "last28",
+       (SELECT MIN(ses.local_date) FROM sessions ses WHERE ${FINISHED}) AS "firstDate",
+       (SELECT MAX(ses.local_date) FROM sessions ses WHERE ${FINISHED}) AS "lastDate"`,
+    [bounds.weekStart, bounds.fourWeeksAgo],
+  )
+}
+
+export interface MuscleSetCount {
+  /** Free text straight from the column, including null - see `muscleMark`. */
+  muscle: string | null
+  sets: number
+}
+
+/**
+ * Sets per muscle group since a date, biggest first.
+ *
+ * Sets rather than volume: the groups being compared are loaded in completely
+ * different ranges, so a leg day would outweigh everything else on volume and
+ * say nothing about balance. Counting sets is the comparison actually being
+ * made - how much work went where.
+ *
+ * Four of the 87 exercises are deliberately unclassified, so a null group is a
+ * real row here and the UI buckets it rather than guessing.
+ */
+export function setsByMuscle(db: Db, since: string): Promise<MuscleSetCount[]> {
+  return db.query<MuscleSetCount>(
+    `SELECT e.primary_muscle AS "muscle",
+            COUNT(*) AS "sets"
+       FROM sets s
+       JOIN sessions ses ON ses.id = s.session_id
+       JOIN exercises e ON e.id = s.exercise_id
+      WHERE s.deleted_at IS NULL
+        AND e.deleted_at IS NULL
+        AND ${FINISHED}
+        AND ses.local_date >= ?
+      GROUP BY e.primary_muscle
+      ORDER BY "sets" DESC`,
+    [since],
+  )
+}

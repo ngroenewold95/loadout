@@ -163,3 +163,55 @@ export function shouldIncreaseLoad(
   // Only the prescribed number of sets counts; extra sets do not lower the bar.
   return reps.slice(0, targetSets).every((r) => r >= repMax)
 }
+
+/** The least a planned exercise has to be to say whether it earned load. */
+interface Prescribed {
+  exerciseId: number
+  targetSets: number | null
+  targetRepMax: number | null
+}
+
+/** The least a past session has to be. `sets` is that session's sets only. */
+interface PastSession {
+  localDate: string
+  sets: readonly { reps: number | null }[]
+}
+
+/**
+ * Which exercises of a whole template earned more load last time.
+ *
+ * The same fold `ExerciseView` does inline for the exercise on screen, applied
+ * across a template so Home can say what is waiting before the workout starts.
+ * Generic over the minimum shape rather than importing the repo's row types,
+ * which is the rule `logic/` keeps and what lets this be tested with plain
+ * objects.
+ *
+ * **Only the most recent session counts**, and an exercise with no history at
+ * all cannot earn anything - there is nothing to have hit the top of.
+ * `targetRepMax` null means the exercise carries no rep goal, so no goal was
+ * met; that is the case for an exercise added to a workout by hand.
+ *
+ * **`since` is what keeps this current rather than archaeological.** Without it
+ * an exercise dropped from the programme a year ago still reports that it earned
+ * more load, on the strength of a session nobody remembers - and after a long
+ * enough layoff the old top of the range says nothing about what is possible
+ * today. Omitting it considers every exercise's last session however old.
+ */
+export function earnedIncreases(
+  planned: readonly Prescribed[],
+  recent: ReadonlyMap<number, readonly PastSession[]>,
+  opts: { since?: string } = {},
+): number[] {
+  const earned: number[] = []
+  for (const exercise of planned) {
+    if (exercise.targetRepMax == null) continue
+    const last = recent.get(exercise.exerciseId)?.[0]
+    if (!last || last.sets.length === 0) continue
+    if (opts.since != null && last.localDate < opts.since) continue
+    const reps = last.sets.map((s) => s.reps ?? 0)
+    if (shouldIncreaseLoad(reps, exercise.targetSets ?? reps.length, exercise.targetRepMax)) {
+      earned.push(exercise.exerciseId)
+    }
+  }
+  return earned
+}

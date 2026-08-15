@@ -14,6 +14,8 @@
  */
 import { useNextTemplate, useTemplates } from '../state/queries.ts'
 import { useNav } from '../state/nav.ts'
+import { HomeStats } from './HomeStats.tsx'
+import { RecentWorkouts } from './WorkoutHistory.tsx'
 
 export function Home() {
   const { data: templates } = useTemplates()
@@ -55,6 +57,12 @@ export function Home() {
             </button>
           ))}
       </div>
+
+      {/* Below the templates, always. Starting a workout is what Home is for,
+          and two taps per set is the constraint that decides everything - the
+          history is what the screen says while you are not doing that. */}
+      <HomeStats />
+      <RecentWorkouts />
     </div>
   )
 }

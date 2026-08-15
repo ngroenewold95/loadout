@@ -25,8 +25,11 @@ import {
   replaceSessionExercise,
   discardSession,
   endSession,
+  historyStats,
+  localDateOf,
   recentPerformance,
   listSessionExercises,
+  listSessionHistory,
   listSessionSets,
   listTemplateExercises,
   listTemplates,
@@ -35,11 +38,14 @@ import {
   searchExercises,
   sessionById,
   setPlannedSets,
+  setsByMuscle,
   startSession,
   updateSet,
   type LogSetInput,
   type UpdateSetInput,
 } from '../db/repo.ts'
+import { daysAgo, startOfWeek } from '../logic/dates.ts'
+import { earnedIncreases } from '../logic/plan.ts'
 
 export const keys = {
   templates: ['templates'] as const,
@@ -50,6 +56,9 @@ export const keys = {
   sessionExercises: (id: number) => ['session', id, 'exercises'] as const,
   recentPerformance: (ids: number[], exclude?: number) =>
     ['recentPerformance', [...ids].sort((a, b) => a - b), exclude ?? null] as const,
+  /** Everything Home says about the past. One key so one invalidation covers
+   *  the list, the totals and the muscle split together. */
+  history: ['history'] as const,
 }
 
 export function useTemplates() {
@@ -140,10 +149,100 @@ export function useRecentPerformance(
   })
 }
 
+/**
+ * Past workouts, newest first.
+ *
+ * `limit` is part of the key, so `Load more` growing it is a fresh query rather
+ * than a mutation of a cached page. Re-reading 50 rows out of a local file is
+ * cheaper than the cursor bookkeeping `useInfiniteQuery` would need.
+ */
+export function useSessionHistory(limit: number, offset = 0) {
+  return useQuery({
+    queryKey: [...keys.history, 'list', limit, offset] as const,
+    queryFn: async () => listSessionHistory(await getDb(), { limit, offset }),
+    placeholderData: (previous) => previous,
+  })
+}
+
+/**
+ * Lifetime totals and training cadence.
+ *
+ * Today's date is in the key so the "this week" boundary cannot go stale in a
+ * session left open across midnight - the numbers would otherwise be answering
+ * yesterday's question.
+ */
+export function useHistoryStats() {
+  const today = localDateOf()
+  return useQuery({
+    queryKey: [...keys.history, 'stats', today] as const,
+    queryFn: async () =>
+      historyStats(await getDb(), {
+        weekStart: startOfWeek(today),
+        fourWeeksAgo: daysAgo(today, 27),
+      }),
+  })
+}
+
+/** How the last four weeks of work was distributed across muscle groups. */
+export function useSetsByMuscle(days = 28) {
+  const since = daysAgo(localDateOf(), days - 1)
+  return useQuery({
+    queryKey: [...keys.history, 'muscles', since] as const,
+    queryFn: async () => setsByMuscle(await getDb(), since),
+  })
+}
+
+/**
+ * How stale a session may be and still say anything about today.
+ *
+ * Four weeks. The programme runs about twice a week, so a movement untouched for
+ * a month has been skipped for several rotations - and whatever it managed then
+ * is no longer a claim about what it can manage now. The same window the muscle
+ * balance uses, for the same reason: this is about recent training, not a record.
+ */
+const READY_MAX_AGE_DAYS = 28
+
+/**
+ * Which exercises of the next workout earned more load last time.
+ *
+ * Three queries, none of them in a loop: the next template, its exercises, and
+ * one `recentPerformance` covering the whole list - the statement measured at
+ * 14.7 ms for 8 exercises over the real database. Only the most recent session
+ * of each is needed, so it asks for one rather than the logging screen's three.
+ *
+ * **Scoped twice over**: to the next workout's exercises, and to sessions inside
+ * the recency window. The first is what stops it reading out all 87 exercises;
+ * the second is what stops a movement dropped from the programme months ago
+ * still announcing that it earned more load.
+ *
+ * Keyed under `history` so logging a set re-computes it; the exercise names come
+ * back with it because the point is to say which, not how many.
+ */
+export function useReadyToAddLoad() {
+  const { data: next } = useNextTemplate()
+  const { data: planned } = useTemplateExercises(next?.id)
+  const ids = (planned ?? []).map((p) => p.exerciseId)
+  const since = daysAgo(localDateOf(), READY_MAX_AGE_DAYS - 1)
+
+  const query = useQuery({
+    queryKey: [...keys.history, 'ready', next?.id ?? null, ids] as const,
+    enabled: ids.length > 0,
+    queryFn: async () => recentPerformance(await getDb(), ids, { sessions: 1 }),
+  })
+
+  const earned = query.data ? earnedIncreases(planned ?? [], query.data, { since }) : []
+  return {
+    template: next ?? null,
+    exercises: (planned ?? []).filter((p) => earned.includes(p.exerciseId)),
+  }
+}
+
 /** Everything a logged set can change. */
 const invalidateAfterSet = (client: QueryClient, sessionId: number) => {
   void client.invalidateQueries({ queryKey: keys.sessionSets(sessionId) })
   void client.invalidateQueries({ queryKey: ['recentPerformance'] })
+  // Home's totals and its readiness list both count sets.
+  void client.invalidateQueries({ queryKey: keys.history })
 }
 
 export function useStartSession() {
@@ -252,6 +351,9 @@ export function useEndSession() {
       // The summary is still on screen when this runs, reading the session it
       // just ended. Without this it would keep rendering a running duration.
       void client.invalidateQueries({ queryKey: keys.session(sessionId) })
+      // Finishing is what moves a session INTO the history: every read there
+      // filters on `ended_at_utc IS NOT NULL`.
+      void client.invalidateQueries({ queryKey: keys.history })
     },
   })
 }
@@ -265,6 +367,7 @@ export function useDiscardSession() {
       void client.invalidateQueries({ queryKey: keys.templates })
       void client.invalidateQueries({ queryKey: ['recentPerformance'] })
       void client.invalidateQueries({ queryKey: keys.session(sessionId) })
+      void client.invalidateQueries({ queryKey: keys.history })
     },
   })
 }

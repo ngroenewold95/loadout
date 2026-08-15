@@ -30,6 +30,41 @@ function parseLocalDate(date: string): number | null {
   return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
+/** Back to `YYYY-MM-DD` from a UTC midnight. The inverse of the parse above. */
+function formatLocalDate(utcMidnight: number): string {
+  return new Date(utcMidnight).toISOString().slice(0, 10)
+}
+
+/**
+ * `n` days before `date`, as another `YYYY-MM-DD`.
+ *
+ * Goes through UTC midnights for the same reason `daysBetween` does: arithmetic
+ * on a local-time Date loses or gains an hour across a clock change, and an hour
+ * either side of midnight is a whole different day to a `local_date` comparison.
+ * An unparseable input comes back unchanged, so a bad boundary can only ever
+ * widen a query rather than silently shifting it.
+ */
+export function daysAgo(date: string, n: number): string {
+  const at = parseLocalDate(date)
+  if (at == null) return date
+  return formatLocalDate(at - n * 86_400_000)
+}
+
+/**
+ * The Monday of the week `date` falls in.
+ *
+ * Monday rather than Sunday because "this week" here means a training week, and
+ * the programme is A/B rolling with no weekday pinning - a week that breaks on
+ * Sunday night would cut most weekends in half.
+ */
+export function startOfWeek(date: string): string {
+  const at = parseLocalDate(date)
+  if (at == null) return date
+  // getUTCDay is 0 for Sunday, so Sunday is 6 days into its week, not -1.
+  const weekday = new Date(at).getUTCDay()
+  return formatLocalDate(at - ((weekday + 6) % 7) * 86_400_000)
+}
+
 /**
  * `today`, `yesterday`, `17 days ago`, `3 months ago`, `2 years ago`.
  *

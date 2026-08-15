@@ -4,7 +4,7 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-08-15
+Last updated: 2026-08-15 (stage 11c, Home shows history)
 
 ---
 
@@ -78,7 +78,10 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
   lettered circle. See below.
 - **History rows load into the entry bar, and the rest pill has an editor**,
   both verified on device. See below.
-- 208 tests passing, typecheck and lint clean
+- **Home shows history, verified on device** - the five years are reachable, and
+  the stats say what to add load to rather than how much has been lifted. See
+  below.
+- 223 tests passing, typecheck and lint clean
 
 Built but **not yet wired to any screen** - these are pure and tested, and the
 UI stages below consume them:
@@ -910,6 +913,106 @@ these hues without going through a screen reader.
 
 ---
 
+## Home shows history - DONE
+
+Stage 11c. The database held 343 sessions, 6,206 sets and five years of work,
+and Home was **two template buttons**. It now carries what training has actually
+been, and every finished session is reachable.
+
+**Tapping a past workout opens the summary that already existed.** `SessionSummary`
+took a `sessionId` rather than a live session from the day it was written and
+hides its whole action bar once `ended_at_utc` is set, so no detail screen was
+built for this. Confirmed on the phone against a 2026-08-13 session: no
+`Finish workout`, no `Discard`, and its `14520 lb` matches the row that opened it.
+
+### The stats are chosen to be acted on, not to be impressive
+
+Volume was the obvious headline and is deliberately **one quiet line at the
+bottom**. Ordering, top to bottom:
+
+1. **Ready for more load**, the only actionable thing on the screen: the
+   programme's own rule, `shouldIncreaseLoad`, run across the next workout's
+   exercises. It says which, not how many, so the numbers can be decided at home
+   rather than under a bar. Renders nothing when nothing earned it.
+2. **Cadence** - `3 this week · 1.8 per week over 4 weeks · last trained today`.
+   Weeks, not a day streak: the programme is A/B **rolling**, so a day count
+   would punish the rest days it asks for.
+3. **Muscle balance** over 28 days, as one stacked bar plus a legend.
+4. **The lifetime line**, one row of small text.
+
+**No PR, e1RM or strength score, deliberately.** Epley is wrong at reps=1 (141
+rows), unreliable above ~10 reps (844 rows), incoherent for duration and distance
+work, and inverts for `assistance`. That is a data model to be built and argued
+about, not a tile to be slipped into a Home screen.
+
+### Readiness is scoped twice, and the second scope was added on review
+
+The first scope was there from the start: it considers **the next workout's
+exercises**, not all 87. The second was added after the question was asked
+directly - within those, it only counts a session from the **last 28 days**.
+
+Without the window an exercise dropped from the programme months ago keeps
+announcing that it earned more load, on the strength of a session nobody
+remembers; and after a long enough layoff the old top of the range is not a claim
+about what is possible today. Four weeks is the same window the muscle balance
+uses, and at roughly two sessions a week it means a movement skipped for several
+rotations stops being advice.
+
+**On the current data the window changes nothing**, and that is worth saying
+rather than dressing up: every one of the nine is from 2026-08-05 or 2026-08-10.
+The filter is proved by `plan.test.ts`, which checks both sides of the boundary
+date, not by the screen.
+
+### `earnedIncreases` was checked against the rows, not trusted
+
+`9 of 11 ready` looked like a bug and was not. Every one was verified against the
+database rather than eyeballed:
+
+- The Day B session of 2026-08-10 was `8 8` on seven exercises against a 5-8
+  target, and `10 10` on the seated calf raise against 6-10. All earned.
+- `Machine Preacher Curl` was `8 7` and is correctly **absent**.
+- `Cable Face Pull` (`10 10`, max 10) and `Cable Crunch` (`8 8`, max 8) earned it
+  in the 2026-08-05 session; `Cable Pushdown` was `8 6` and is absent.
+
+**The pre-programme-switch caveat did not bite, and now has a measurement rather
+than a worry.** The concern was that an exercise last performed before the
+2026-08-08 switch would be judged against a rep ceiling the old programme never
+had. The two exercises that reach back past the switch, Face Pull and Cable
+Crunch, carried the same ceilings under both, so the answer is right either way.
+If a future programme changes a range, this is where it would go wrong - and the
+28-day window bounds how far back that can reach, without fixing it.
+
+### Volume in SQL, and why the lifetime figure is not 7,543,590 lb
+
+The tile reads **7.3M lb**, not the 7,543,590 lb the import reconciled. That is
+correct and is the assistance rule doing its job: `7,259,720 lb` excluding
+`load_mode = 'assistance'`, `7,543,590 lb` including it, verified directly
+against the database. The reconciliation figure is CSV total volume and counts
+assistance as though it were load.
+
+Totalling a *list* of sessions cannot reuse `sessionTotals` - it would pull all
+6,206 sets across the bridge - so volume exists as a SQL expression too. The two
+are held together by a conformance test that runs both over the same rows,
+including an assistance set and a bodyweight set, rather than by hoping they were
+written the same way. `historyStats` is built from **scalar subqueries with no
+join**, because joining sets to sessions repeats each session once per set and
+would have multiplied every duration by the number of sets in it.
+
+### Measured on device, screenshot before every tap
+
+| Step | Measured |
+|---|---|
+| Finish a live workout | Home appeared with `344 workouts · 6,209 sets · 7.3M lb · 508 hours · since 2021-07-06`, up from 343 / 6,206 by exactly the test session |
+| Cadence | `3 this week` - 08-10, 08-13, 08-15 against a Monday-start week beginning 08-10. `1.8 per week` is 7 sessions in 28 days over 4 |
+| Muscle bar | `101 sets`: shoulders 20, legs 19, back 18, chest 16, biceps 12, abs 8, triceps 6, calves 2. No `other` bucket, because nothing unclassified was trained in the window |
+| Recent | Five rows, newest first, `2026-08-13 · 2 days ago · 18 sets · 14520 lb · 1:34:40` |
+| Tap a row | Summary opened with **no action bar**, volume matching the row |
+| Back | Home, not a workout. `topResumedActivity` still loadout |
+| `All workouts` | 25 rows, `Load more` extended it to 50 without losing the scroll position |
+| Cold start | Force-stop and relaunch renders the whole screen with nothing in logcat |
+
+---
+
 ## How load is made up - `loading`, bar weight, plates
 
 Schema and solver exist and are tested; **nothing renders them yet** (stage 14,
@@ -1108,7 +1211,12 @@ src/
                     that render them, because all three outlive a push
   ui/
     AppHeader.tsx   app bar; back arrow or the wordmark, and the rest pill
-    Home.tsx        the two templates. Opens one; does NOT start it
+    Home.tsx        the two templates, then the stats and the recent workouts.
+                    Opens a template; does NOT start it
+    HomeStats.tsx   ready for more load, cadence, muscle balance, lifetime
+    WorkoutHistory.tsx  past workouts as rows; Home's recent five and the
+                    All workouts screen. Rows open the existing summary
+    Stat.tsx        one labelled number in a tile, shared with the summary
     WorkoutOverview.tsx  the workout as a list, and the root while one is live.
                     Also renders a template read-only, before `Start workout`
     ExerciseView.tsx  THE LOGGING LOOP - header, pager, docked entry bar.
@@ -1148,7 +1256,7 @@ db/                 gitignored - rebuildable until cutover
 ```bash
 npm run dev          # Vite dev server; seeds FABRICATED history if empty
 npm run build        # tsc -b && vite build
-npm run test         # vitest (198 tests)
+npm run test         # vitest (223 tests)
 npm run lint         # oxlint
 npm run import       # rebuild db/ from the NEWEST Examples/*.csv; refuses after cutover
 npm run profile      # profile any CSV's structure
@@ -1625,18 +1733,22 @@ moved the list, Home starting a workout by accident - and the ordering principle
 above says workout flow comes first, so they became stage 11 and the exercise
 library moved back. The stage numbers below are the new ones.
 
-Stages 0 to 11b are **done and verified on device**: the pre-migration backup,
+Stages 0 to 11c are **done and verified on device**: the pre-migration backup,
 the palette, all the pure logic, repo and schema groundwork, the docked entry
 bar, the navigation shell, weight beside reps, pre-created set slots, the swipe
 pager and aligned history, auto-advance and the summary, the session plan
 snapshot with the picker and a real `Add set`, the rest timer as an app-bar
-pill, the workout overview with the new exercise identity, and the entry bar
- and rest-pill changes.
+pill, the workout overview with the new exercise identity, the entry bar
+and rest-pill changes, and Home showing the history behind it.
 
 **A workout now runs end to end**: open a template without starting it, start
 it, jump between exercises from the list or swipe between neighbours, log
 against five years of history, correct anything, reorder, add or cut exercises
 and sets, and finish on a summary that says what it came to.
+
+**And the five years are no longer invisible.** Home says what is ready for more
+load, how often training has happened lately and where the work went, and every
+finished session can be opened.
 
 Each stage is independently shippable. Prove each on the phone before starting
 the next - screenshot before every tap.
@@ -1667,6 +1779,10 @@ the next - screenshot before every tap.
     and type size changed and `SCRUB_PX_PER_STEP` is untouched, so the drags
     should be unaffected, but that is reasoning rather than a measurement and
     the last four taps and two drags on record predate the change.
+11c. ~~**Home shows history.**~~ **Done and verified on device** - see "Home
+    shows history" above. Recent workouts, an `All workouts` screen, and stats
+    chosen to be acted on. Taken ahead of the exercise library because Home was
+    the first screen anyone sees and it showed none of the five years behind it.
 12. **Exercise library and exercise detail.** Guidance ships as a static table
     keyed by exact exercise name, exactly like `logic/exerciseMuscles.ts`,
     seeded into the database by a **fill-blanks** seeder like `seedMuscles.ts`
@@ -1719,11 +1835,12 @@ Then, still blocking cutover:
 
 ### Not blocking cutover
 
-- Progression cue is currently advisory text only. It could pre-fill the next
-  session's weight, which is the natural payoff of `shouldIncreaseLoad`.
-- Progress and statistics views. Stage 12 gives one exercise its full history,
-  which is the first thing to read the five years back at all, but there is
-  still nothing that looks across exercises or over time.
+- Progression cue is currently advisory text only, in the workout and now on
+  Home. It could pre-fill the next session's weight, which is the natural payoff
+  of `shouldIncreaseLoad` and the obvious next step from the readiness list.
+- Progress and **trends over time**. Stage 11c reads the five years back as
+  totals and as a list, and stage 12 gives one exercise its full history, but
+  nothing charts anything or compares a period against an earlier one.
 - ~~`npm run dev` runs against an empty jeep-sqlite database.~~ **Done.**
   `src/db/devSeed.ts` writes fabricated sessions into an empty web database on
   first load. Three guards keep it away from real data: **web only** and **dev
@@ -1737,9 +1854,9 @@ Then, still blocking cutover:
   **The data is invented and must stay invented** - nothing in it may come from
   `Examples/`, which holds the only copy of the real export and its medical
   notes. Exercise names come from `plan.ts`, which is committed.
-- **Home is still two template buttons.** The database holds 343 sessions and
-  6,206 sets and no screen shows any of it, which is the first thing anyone
-  opening the app sees. Stage 11a only changed what a tap on them *does*.
+- ~~**Home is still two template buttons.**~~ **Done in stage 11c**, and taken
+  ahead of the exercise library for the reason recorded here: it was the first
+  screen anyone opening the app sees.
 - **Long-press to drag and reorder**, on the overview and later in the template
   editor. `Move up` / `Move down` cover the case; dragging would cover it in one
   gesture instead of one per place. Wanted, not needed.
