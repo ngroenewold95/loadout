@@ -21,6 +21,8 @@ public class MainActivity extends BridgeActivity {
         // Plugins living in the app package must be registered before the
         // bridge starts; auto-discovery only covers installed plugin packages.
         registerPlugin(RestTimerPlugin.class);
+        registerPlugin(AppScreenPlugin.class);
+        registerPlugin(BackupPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

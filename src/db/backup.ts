@@ -16,8 +16,10 @@
  * corrupts or half-writes the schema - the threat that matters most now, since
  * migration 0001 already had to be hand-fixed after drizzle-kit emitted broken
  * SQL. It does **not** protect against uninstall, because these copies live in
- * the same app-private directory as the database. The synced-folder export is a
- * separate piece of work.
+ * the same app-private directory as the database. That is what the export at
+ * the bottom of this file is for: the same `VACUUM INTO`, into a staging file
+ * that `BackupPlugin` then copies out to a folder the user chose, which is the
+ * only place that survives the app being removed.
  */
 import type { Db } from './driver.ts'
 
@@ -82,4 +84,57 @@ export async function backupBeforeMigrate(
   const target = backupTarget(databaseUrl, nextIndex, now)
   await db.exec(`VACUUM INTO ${quote(target)}`)
   return target
+}
+
+// ------------------------------------------------------------------- export
+
+/** What an exported copy is called. Sorts chronologically as plain text. */
+const EXPORT_PREFIX = 'loadout-'
+
+/**
+ * Take a copy for export, into a staging file beside the database.
+ *
+ * Two steps rather than one because `VACUUM INTO` writes with the app's own
+ * uid to a filesystem path, and the folder the user picks is a SAF tree uri
+ * that only the native side can write. So: copy here, hand the bytes over
+ * there, delete the staging file.
+ *
+ * The timestamp is in the name because `VACUUM INTO` refuses to overwrite, and
+ * because a folder of these should read as a history.
+ */
+export async function exportSnapshot(
+  db: Db,
+  directory: string,
+  now: Date = new Date(),
+): Promise<{ path: string; name: string }> {
+  const dir = directory.endsWith('/') ? directory : `${directory}/`
+  const name = `${EXPORT_PREFIX}${stamp(now)}.db`
+  const path = `${dir}${name}`
+  await db.exec(`VACUUM INTO ${quote(path)}`)
+  return { path, name }
+}
+
+/**
+ * Which exports to delete, given everything in the folder and how many to keep.
+ *
+ * Pure, and tested in Node, because the interesting part is the policy and the
+ * only thing a device could add is the file listing. Names not matching the
+ * export pattern are never returned: the folder is the user's and may hold
+ * anything else at all.
+ */
+export function exportsToPrune(names: string[], keep: number): string[] {
+  const mine = names.filter((n) => n.startsWith(EXPORT_PREFIX) && n.endsWith('.db')).sort()
+  if (keep <= 0) return mine
+  // Sorted ascending and the stamp is fixed width, so the newest are the tail.
+  return mine.slice(0, Math.max(0, mine.length - keep))
+}
+
+/** The directory holding the live database, from the plugin's own URL. */
+export function databaseDirectory(databaseUrl: string): string {
+  const path = decodeURIComponent(databaseUrl.replace(/^file:\/\//, '')).replace(
+    /^\/([A-Za-z]:\/)/,
+    '$1',
+  )
+  const cut = path.lastIndexOf('/')
+  return cut === -1 ? '' : path.slice(0, cut + 1)
 }

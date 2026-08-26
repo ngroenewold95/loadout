@@ -15,7 +15,12 @@ import { pathToFileURL } from 'node:url'
 import { openNodeDb, type NodeDb } from './node.ts'
 import { applyMigrations } from './migrations.ts'
 import { loadMigrations } from '../../scripts/migrate.ts'
-import { backupBeforeMigrate, backupTarget } from './backup.ts'
+import {
+  backupBeforeMigrate,
+  backupTarget,
+  databaseDirectory,
+  exportsToPrune,
+} from './backup.ts'
 
 const AT = new Date(Date.UTC(2026, 7, 9, 10, 45, 0))
 
@@ -111,5 +116,38 @@ describe('backupBeforeMigrate', () => {
     const target = await backupBeforeMigrate(odd, join(dir, "o'brien.db"), 1, AT)
     expect(existsSync(target)).toBe(true)
     await odd.close()
+  })
+})
+
+describe('exportsToPrune', () => {
+  it('keeps the newest N and returns the rest', () => {
+    const names = [
+      'loadout-20260810-100000.db',
+      'loadout-20260811-100000.db',
+      'loadout-20260812-100000.db',
+    ]
+    expect(exportsToPrune(names, 2)).toEqual(['loadout-20260810-100000.db'])
+    expect(exportsToPrune(names, 3)).toEqual([])
+    expect(exportsToPrune(names, 10)).toEqual([])
+  })
+
+  it('never touches a file it did not write', () => {
+    // The folder is the user's and may hold anything at all - a photo, another
+    // app's backup, a note. Deleting one of those would be unforgivable.
+    const names = ['holiday.jpg', 'notes.txt', 'loadout-20260810-100000.db', 'loadout.db']
+    expect(exportsToPrune(names, 0)).toEqual(['loadout-20260810-100000.db'])
+  })
+
+  it('sorts by name, which the fixed-width stamp makes chronological', () => {
+    const names = ['loadout-20260901-090000.db', 'loadout-20260812-235959.db']
+    expect(exportsToPrune(names, 1)).toEqual(['loadout-20260812-235959.db'])
+  })
+})
+
+describe('databaseDirectory', () => {
+  it('keeps the directory the plugin reported, trailing slash and all', () => {
+    expect(databaseDirectory('file:///data/user/0/com.groenewold.loadout/databases/x.db')).toBe(
+      '/data/user/0/com.groenewold.loadout/databases/',
+    )
   })
 })
