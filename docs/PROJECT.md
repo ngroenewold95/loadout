@@ -4,7 +4,8 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-08-15 (stage 11c, Home shows history)
+Last updated: 2026-08-25 (stages 12 to 16: library, template editor, plate
+chips, gym settings, synced-folder export)
 
 ---
 
@@ -81,19 +82,23 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
 - **Home shows history, verified on device** - the five years are reachable, and
   the stats say what to add load to rather than how much has been lifted. See
   below.
-- 223 tests passing, typecheck and lint clean
+- **Exercise library and detail screen, verified on device** - guidance, totals
+  and every session of one exercise, with assistance inverted. Migration 0006.
+  See below.
+- **Template editor, verified on device** - the programme is editable in the
+  app, and the edits survive a force-stop. See below.
+- **Plate chips, verified on device** - `platesFor` finally has a caller, and
+  `LOG SET` does not move when they appear. See below.
+- **The gym settings, verified on device** - increment, keep screen on, and the
+  three rest-timer toggles, all in SQLite. See below.
+- **Synced-folder export, verified on device including uninstall.** See below.
+- 256 tests passing, typecheck and lint clean
 
-Built but **not yet wired to any screen** - these are pure and tested, and the
-UI stages below consume them:
+Everything that was built and wired to nothing is now wired: `platesFor` has a
+caller, `app_settings` and `plate_inventory` are seeded, and `exercises.loading`
+/ `modality` / `default_increment_kg` all have both a writer and a reader.
 
-- `platesFor` in `src/logic/plates.ts` - the inventory-aware plate solver
-- `app_settings` and `plate_inventory` tables, both **empty**
-- `exercises.loading` and `exercises.default_increment_kg`, both **null for all
-  87 rows**, so plate chips stay dormant until they are populated
-
-Not built yet: stages 12-17 below - the exercise library and detail screen, the
-template editor, plate chips, the settings that matter in a gym, and the
-synced-folder export.
+Not built yet: stage 17, deleting the spikes.
 
 ---
 
@@ -1183,6 +1188,8 @@ src/
     plates.ts       inventory-aware plate solver; the `loading` axis
     muscles.ts      the eight groups and their colours; muscleMark
     exerciseMuscles.ts  exact exercise name -> group, all 87
+    exerciseGuidance.ts AUTHORED cues, the 21 programme lifts
+    exerciseEquipment.ts modality / loading / base, only where proved
   db/
     schema.ts       Drizzle schema; source of truth for migrations
     migrations.ts   shared migration runner (Node + device)
@@ -1194,6 +1201,10 @@ src/
     repo.ts         EVERY query the app makes
     seedPlan.ts     plan.ts -> templates tables, one transaction
     seedMuscles.ts  fills blank primary_muscle; only ever fills blanks
+    seedExerciseGuidance.ts  fills blank guidance from the authored table
+    seedExerciseEquipment.ts fills blank modality / loading / base weight
+    seedDefaults.ts the app_settings row and the plate inventory, if absent
+    seed.ts         every launch seeder in one place. NEVER seedPlanTemplates
     devSeed.ts      FABRICATED history, browser dev only, never the phone
     backup.ts       VACUUM INTO copy taken before device migrations
   Tests sit beside what they cover. Two carry their own weight:
@@ -1203,6 +1214,8 @@ src/
                            reference app, not against an idea of a solver
   native/
     restTimer.ts    JS face of the rest-timer plugin
+    screen.ts       keep the screen on while training
+    backup.ts       the synced-folder export, and its daily throttle
   state/
     queries.ts      TanStack Query over the repo; keys and invalidation
     nav.ts          the screen stack; back() reports whether it popped, and
@@ -1231,6 +1244,13 @@ src/
     ActionSheet.tsx a menu that floats over the screen instead of growing in it
     GroupTag.tsx    the identity: a colour rail, and the group said outright
     TimerSpike.tsx  throwaway harness for the timer - behind `debug`
+    ExerciseLibrary.tsx  all 87, wrapping the picker; rows open the detail
+    ExerciseDetail.tsx   guidance, totals and every session of one exercise
+    ExercisePlanEditor.tsx  sets, reps and rest - the SAME editor in the
+                    template and in the live workout
+    PlateChips.tsx  what to load, above the entry fields. Dashed when short
+    Settings.tsx    the handful of settings that matter under a bar
+    setText.ts      how a performed set reads, in one place
     DbSmoke.tsx     throwaway on-device check of the db layer - same
 scripts/
   import.ts         CSV -> SQLite, drop-and-rebuild, reconciliation
@@ -1241,7 +1261,9 @@ scripts/
   add-strict.mjs    post-processes drizzle output to add STRICT
 drizzle/            generated SQL migrations + journal
 android/app/src/main/java/com/groenewold/loadout/
-  MainActivity.java      registers plugin; owns the isForeground flag
+  MainActivity.java      registers plugins; owns the isForeground flag
+  AppScreenPlugin.java   FLAG_KEEP_SCREEN_ON while a workout is live
+  BackupPlugin.java      SAF folder pick, and the copy that survives uninstall
   RestTimerPlugin.java   JS-facing surface: start/extend/cancel/permissions
   RestTimerService.java  foreground service, overlay lifecycle, haptics
   TimerOverlayView.java  hand-drawn bubble: ring, M:SS, red count-up
@@ -1256,7 +1278,7 @@ db/                 gitignored - rebuildable until cutover
 ```bash
 npm run dev          # Vite dev server; seeds FABRICATED history if empty
 npm run build        # tsc -b && vite build
-npm run test         # vitest (223 tests)
+npm run test         # vitest (256 tests)
 npm run lint         # oxlint
 npm run import       # rebuild db/ from the NEWEST Examples/*.csv; refuses after cutover
 npm run profile      # profile any CSV's structure
@@ -1454,6 +1476,30 @@ Live Updates, and `Notification.ProgressStyle` (the feature is documented as
 
 ### Corrections - recorded so they are not repeated
 
+- **`executeSet` opened its own transaction, and on device that is fatal.**
+  `capacitor.ts` passed `true` for the plugin's transaction flag in `batch()`
+  while `exec()` passed `false` two functions above it, with a comment
+  explaining why. Inside our own transaction the plugin called
+  `beginTransaction` a second time and the whole batch failed with
+  `ExecuteSet: Failed in beginTransaction Already in transaction`, rolling back.
+  It had never bitten because **no batch had ever run inside a transaction on
+  device**: `seedPlan` and `seedMuscles` only ever ran on the laptop, and the
+  first launch of the on-device seeders is what found it. The flag now follows
+  our own depth, so a bare batch is still atomic on its own. The lesson is the
+  familiar one: a rule stated in a comment two functions away is not enforced,
+  and the device step is where that gets discovered.
+- **Discarding a workout left the rest timer running.** The rest belongs to the
+  service, and nothing told it the session had gone, so the pill kept counting
+  and the foreground service stayed alive for a workout that no longer existed.
+  Both halves have to be cleared - the native timer and the store - and both
+  `useEndSession` and `useDiscardSession` now do it. Measured before and after:
+  two `ServiceRecord`s while resting, one after a discard.
+- **Blind chained taps caused a mis-tap again.** After logging a set the screen
+  auto-advanced, so a `Finish` tap issued from a stale screenshot landed on an
+  exercise card instead. `PROJECT.md` has said "screenshot before every tap"
+  since the first device session and this is the third time it has been proved.
+  Reading the target's `bounds` out of `uiautomator dump` immediately before
+  tapping is stricter and was what finally got the cleanup right.
 - **`plan.ts` did not match the programme, and nothing would have caught it.**
   It was typed from `Examples/Plan.md` and then treated as settled, but the
   written plan is a document and the app is the thing being trained against.
@@ -1718,6 +1764,258 @@ exists to kill is still that bug.
 
 ---
 
+## Exercise library and detail - DONE
+
+Stage 12, and migration 0006. `ALTER TABLE exercises ADD guidance text` - a
+nullable column with no CHECK, so a plain ADD COLUMN rather than the
+create-new/copy/drop/rename rebuild 0001 and 0004 needed, and none of the
+drizzle breakage applies. Read it anyway; a rebuild here would have meant
+something else in `schema.ts` had drifted.
+
+**Guidance is authored, not measured**, and `logic/exerciseGuidance.ts` says so
+in its own header. The 21 programme lifts carry newline separated cue lines;
+every other exercise renders "no guidance yet" rather than an empty heading. One
+text column, no parser, no schema for structure.
+
+**The seeders now run on device.** Nothing seeded there before: the fill-blanks
+seeders were called only from `scripts/import.ts` and `devSeed.ts`, which is
+useless the moment a re-import is no longer possible, and cutover is one-way.
+`db/seed.ts` runs them all on launch, unconditionally, because every one of them
+only fills blanks. Its header states the rule that keeps stage 13 honest:
+**`seedPlanTemplates` is never called from there**, because it replaces
+templates by name and would silently undo every template edit.
+
+`exerciseHistory` **pages by rank, not by row**, so `Load more` can only ever
+add whole sessions; a row limit would render half a session as though that was
+all that was performed. It is the same `DENSE_RANK() OVER (PARTITION BY ...)`
+the logging screen depends on, which is now proved on device by a screen a user
+opens rather than only by `DbSmoke`.
+
+### Measured on device, screenshot before every tap
+
+| Step | Measured |
+|---|---|
+| Launch after 0006 | `backed up ... before-0006`, `applying 0006_exercise_guidance (1 statements)`, then `seeded: 83 with a group, 21 with guidance, 57 with a loading, 24 with a base, 6 plate sizes` |
+| Second launch | the identical seeded line, which is the fill-blanks claim holding |
+| `Exercises` from Home | 87 by recency with real counts - `Trap Bar Deadlift · 10 days ago · 23 sets` |
+| `Trap Bar Deadlift` | sets 23, sessions 12, best 365 lb, `2026-04-06 to 2026-08-15 · most reps 8 · 55k lb lifted`, four cues, sessions newest first |
+| `Assisted Pullup` | tile reads **LEAST ASSIST 25 lb**, not a "best" of 52, and the summary line carries no volume at all |
+| Card menu in a workout | `About this exercise` opens the same screen, and back returns to the workout |
+
+**The assistance inversion is the point of the stage.** 420 imported sets record
+machine assistance, where a higher number is an easier set, so the repo returns
+the heaviest load and the least assistance as separate columns and the screen
+labels whichever it got. A single "best" reads backwards for those rows.
+
+---
+
+## Template editor - DONE
+
+Stage 13, no migration. The rep-range columns have existed and been populated
+since 0002 and nothing could edit them, which was the whole gap.
+
+**One writer, two tables.** `setExercisePlan(db, scope, ...)` takes a closed
+union - `session_exercises` or `template_exercises` - and `ExercisePlanEditor`
+is mounted from both the template editor and the live workout's card menu. That
+is the reference app's own insight and the reason this was a stage rather than a
+screen: the same editor in both places is what stops the programme and the
+performance of it drifting apart. The editor is built from `EntryField`, so the
+stepper, the drag scrub and the keypad are the ones already measured.
+
+`WorkoutOverview`'s `Layout` now has three callers: the live workout, the
+read-only preview, and the editor. The `...` menu appears on the preview too,
+because it carries `About this exercise`, which is worth having wherever an
+exercise is listed.
+
+### Measured on device, screenshot before every tap
+
+| Step | Measured |
+|---|---|
+| `Edit` from the preview | The same card list, plus `Add exercise` and `Done` |
+| Card menu | `About this exercise`, `Move up` (disabled on the first row), `Move down`, `Sets, reps and rest`, `Replace`, `Remove` |
+| `Sets, reps and rest` | `2 × 5-8 · rest 4:00` edited to `3 × 5-10 · rest 3:30`, and the card followed on save |
+| **Force-stop and relaunch** | **the edit was still there** - the tap that proves `plan.ts` is not re-seeding, and the most important one in the stage |
+| Start a workout from it | the snapshot took the edited numbers: `3 × 5-10 · 0/3 sets · rest 3:30` |
+
+---
+
+## Plate chips - DONE
+
+Stage 14, no migration. All three empty things are filled by **seeders rather
+than a migration**, because a migration runs once per database and a device
+re-pushed from an older lineage would arrive without them and get no second
+chance.
+
+**`loading` is stated only where a logged set proves it.** Whether a machine is
+plate-loaded per side or a selectorised stack is a fact about one gym, not
+something inferable from a name, and a wrong guess puts a plate breakdown under
+a pin stack. So `logic/exerciseEquipment.ts` names barbells, the trap bar, the
+two Smith lifts, dumbbells, cables and bodyweight - and exactly five `Machine*`
+rows, each reconciled against its own history:
+
+| Exercise | Base | Proof |
+|---|---|---|
+| Machine Leg Press | 100 lb | `Machine weight 100 / 7x45 per side` against a logged 730 lb |
+| Machine Hack Squat | 55 lb | `Machine weight 55lb / 3x45 per side` against 325 lb |
+| Machine V-Squat | 55 lb | `Machine weight 55lb / 4x45` against 415 lb, so per side despite the wording |
+| Machine Calf Raise (Seated) | 60 lb | `Machine weight 60lb. 1x45 1x25 per side` against 200 lb |
+| Hip Thrust | 15 lb | `Machine weight 15lb / 3x45 per side` against 285 lb |
+| Smith Machine, both | 20 lb | `20 machine / 1x45 1x25` against 160 lb |
+
+**Per side versus total is not inferable from the note's wording** and was
+checked arithmetically in every case. Every other `Machine*` row is absent on
+purpose and renders no chips at all.
+
+**The trap bar is recorded as 55 lb and that is contested.** One set carries
+`Trap bar 55lb` and was logged at 235 lb, which is 55 + 2 × 45 exactly, on
+2026-04-06. The user believes the bar currently in use is 45 lb and will confirm
+at the gym. The measured value is what the file holds until then; it is a
+one-line edit.
+
+**The inventory is seeded at 20 of each** of the measured 2.5 / 5 / 10 / 25 / 35
+/ 45 lb denominations. The count of 8 measured off the reference app describes a
+home rack, and the gym being trained in has a 730 lb leg press in its own
+history, which 8 cannot reach. The denominations stay honest, so the dashed
+shortfall chip still appears for a weight no real combination makes.
+
+**`BASE_WEIGHT_KG` is one SQL expression**, reused by `listTemplateExercises`,
+`listSessionExercises`, `searchExercises` and `logSet`, so the chip row and the
+`base_weight_kg` snapshotted onto a set cannot disagree.
+
+### Measured on device
+
+| Step | Measured |
+|---|---|
+| Smith Machine BSS at 160 lb | `45 25 per side · 20 base`, which is 20 + 2 × 70 exactly, and matches that exercise's own five-year-old note |
+| Smith Machine Incline at 200 lb | `45 × 2 per side · 20 base` |
+| Step to 162.5 lb | `45 25 [1.25 short] per side · 20 base` - the shortfall as a dashed chip, never rounded away |
+| `Assisted Pullup` | no chip row at all, because its loading is unknown |
+| **`LOG SET` bounds** | **`[42,2157][1039,2317]` with chips and without**, and identical to the reading on record from before chips existed |
+
+---
+
+## The gym settings - DONE
+
+Stage 15, no migration; all six columns have existed since 0003 with no reader.
+This is the reader and the writer. **In SQLite, not React state**: a toggle that
+did not survive a force-stop would be worse than none.
+
+Three of the five needed Java:
+
+- **Keep screen on** is a new `AppScreenPlugin` setting `FLAG_KEEP_SCREEN_ON` on
+  the activity window, applied from an effect scoped to a live session. A wake
+  lock would be the wrong tool; the flag dies with the activity, which is the
+  wanted behaviour if the phone is pocketed.
+- **Floating bubble** and **Vibrate** are a third gate in `showOverlay()` and a
+  guard in `scheduleVibration()`.
+- **Sound did not exist at all** - the channel is created with no sound and the
+  notification is silent - so it is a `ToneGenerator` on `STREAM_ALARM`, fired
+  from the same `postDelayed` as the buzz at zero and cancelled with it.
+
+**The settings ride in as intent extras on each `ACTION_START`.** The service
+cannot read the database: that lives in the WebView's process, which is exactly
+what the service has to outlive. So a toggle applies from the **next** rest, and
+the screen says so rather than leaving it to be discovered.
+
+`stepForExercise` resolves the step as exercise override, then setting, then
+`WEIGHT_STEPS`, which finally gives `exercises.default_increment_kg` a reader.
+The three hard-coded `const UNIT: Unit = 'lb'` copies collapsed into one
+`DEFAULT_UNIT`; there is still deliberately no unit setting.
+
+### Measured on device
+
+| Step | Measured |
+|---|---|
+| Seeded defaults | increment 5, bubble On, vibrate On, sound Off, keep screen Off, folder not set |
+| Increment 2.5, force-stop, relaunch | still 2.5, and `Keep screen on` still On |
+| In a workout | the handles read `+2.5` / `−2.5`, and stepping moved 160 to 162.5 |
+| Keep screen on | `dumpsys window` reports `mHoldScreenWindow=...MainActivity` and `fl=KEEP_SCREEN_ON` |
+| Bubble **On**, log a set, home | `mAlertWindows={Window{... com.groenewold.loadout}}` |
+| Bubble **Off**, log a set, home | `mAlertWindows={}`, with the rest service still running |
+
+**Not verified:** the haptic pattern and the tone, by feel and by ear. Both were
+driven remotely over adb, and neither can be confirmed that way.
+
+**A gap worth recording:** Home is where `Exercises` and `Settings` live, and
+Home is replaced by the workout overview while a session is live, so **neither
+is reachable mid-workout** except `About this exercise` from a card menu.
+
+---
+
+## Synced-folder export - DONE
+
+Stage 16, no migration, and **nothing here cuts over**. The device database
+stays disposable.
+
+The threat is uninstall, not a bad migration: `backup.ts` already copies before
+migrating, but into the same app-private directory that goes with the app. And
+`VACUUM INTO` writes as the app's own uid to a filesystem path, while the only
+destination that survives is a folder the user picked. So the export is two
+steps: `VACUUM INTO` a staging file beside the database, then `BackupPlugin`
+streams it into a **SAF tree uri** and deletes the staging copy.
+
+The tree uri and the "last export day" marker live in `SharedPreferences`, not
+in `app_settings`. Both are facts about this installation; a destination
+restored from an exported copy would point at the old installation's folder, and
+a restored marker would claim an export this device never made.
+
+Retention is decided in TypeScript (`exportsToPrune`, pure and tested) and
+executed natively, so the plugin never decides anything and **never touches a
+file it did not write** - the folder is the user's and may hold anything.
+
+### Measured on device
+
+| Step | Measured |
+|---|---|
+| `Choose folder` | Android refuses `Download` itself, so a `loadout-backups` folder was created inside it and granted |
+| `Export a copy now` | `Copied loadout-20260826-040730.db.`, 1,118,208 bytes in the folder, and **no staging file left** in `databases/` |
+| Pulled back, opened in better-sqlite3 | `integrity_check ok`, `foreign_key_check` empty, 6,209 sets and 344 sessions matching the device |
+| Relaunch the same day | still one file, which is the daily throttle |
+| Finish a workout | a second file, `loadout-20260826-040935.db` |
+| **Uninstall the app** | **both files still in the folder**, which is the whole point of the stage |
+
+### What the reinstall shook out, and it is not our bug
+
+Reinstalling and pushing the database back produced an app with **no data and no
+error on screen**: `createConnection` failed with `CapacitorSQLitePlugin: null`
+and every query returned nothing. The cause was Android's own auto-restore,
+which had put an old `databases/` directory back under a new uid; the listing
+showed restored backups dated 1970 beside the pushed file. `pm clear` and a
+re-push fixed it, and the app then migrated 0000 through 0006 from scratch on an
+empty database exactly as it should.
+
+Worth knowing before a cutover: **`adb uninstall` does not leave a clean slate**
+on a device with backup enabled. Use `pm clear` before pushing a database.
+
+---
+
+## The cutover procedure
+
+**Written down, not performed.** The device database is still disposable and
+stays that way until step 3 below is actually run. Everything before that point
+is reversible; that step is not.
+
+1. Final `npm run import` over the newest `Examples/*.csv`. The reconciliation
+   must report an exact total-volume match. Anything less is not a cutover, it
+   is a data loss with a timestamp.
+2. `VACUUM INTO db/for-device.sqlite`, then `PRAGMA user_version = 1`. The
+   plugin opens at version 1 and would otherwise hunt for an upgrade statement
+   that does not exist; `__migrations` remains the real ratchet.
+3. Force-stop, push, and copy over `databases/loadoutSQLite.db`, removing the
+   `-wal` and `-shm` beside it. The exact commands are in "Putting the imported
+   history on the phone" above.
+4. Open the app. Verify Home's lifetime line against the import report, and that
+   both templates read `not done yet`. The launch seeders fill any metadata the
+   pushed file is missing and report their totals in logcat.
+5. In `Settings`, choose the export folder and tap `Export a copy now`. Confirm
+   the file lands and that whatever syncs that folder picks it up. **Do this
+   before leaving the house**, because from here the phone holds the only copy
+   of anything logged natively.
+6. From then on, `npm run import` refuses the moment any `sets.source =
+   'native'` row exists. Cutover is one-way.
+
+---
+
 ## Next steps
 
 **Where the plan is up to.** The original ten-stage plan rebuilt the logging
@@ -1783,57 +2081,49 @@ the next - screenshot before every tap.
     shows history" above. Recent workouts, an `All workouts` screen, and stats
     chosen to be acted on. Taken ahead of the exercise library because Home was
     the first screen anyone sees and it showed none of the five years behind it.
-12. **Exercise library and exercise detail.** Guidance ships as a static table
-    keyed by exact exercise name, exactly like `logic/exerciseMuscles.ts`,
-    seeded into the database by a **fill-blanks** seeder like `seedMuscles.ts`
-    so a hand edit survives a re-run. Migration 0006. Author the 21 programme
-    exercises first; the rest render "no guidance yet". The detail screen is the
-    first thing in the app to read the five years back: full per-exercise
-    history, one statement, no query in a loop. **`load_mode = 'assistance'`
-    inverts** - 420 imported sets record assistance, where a higher number is an
-    easier set, so a naive "best" reads backwards.
-13. **Template editor.** The insight worth copying is **reuse**: the reference
-    app mounts the same per-exercise editor in the live workout and in the
-    template, which is what stops the two drifting. Add / remove / reorder,
-    rep-range, sets and rest editing. The rep-range columns already exist and
-    are populated; nothing can edit them, which is the whole gap. Must write
-    `seedPlanTemplates`-shaped soft deletes, never hard ones, and must never
-    re-read `plan.ts` at runtime or an edit is silently undone on next launch.
-14. **Plate chips**, rendering `platesFor` above the entry fields and
-    recomputing on every keystroke and scrub tick. Gated on `loading` being
-    plate-loaded, so **populating `loading` and the `plate_inventory` /
-    `app_settings` rows is part of this stage** - all three are empty today.
-    See "How load is made up".
-15. **The settings that matter in a gym**: `Increment (Weight)`, `Keep screen on
-    while training`, a toggle for the overlay bubble, and rest `Vibrate` /
-    `Sound`. Columns already exist in `app_settings`.
+12. ~~**Exercise library and exercise detail.**~~ **Done and verified on
+    device** - migration 0006; see "Exercise library and detail" above. The
+    launch seeders came with it, because a device that has stopped being
+    re-imported has no other way to receive metadata.
+13. ~~**Template editor.**~~ **Done and verified on device** - see "Template
+    editor" above. One editor over two tables, and the edits survive a
+    force-stop, which is what proves `plan.ts` is not re-seeding.
+14. ~~**Plate chips.**~~ **Done and verified on device** - see "Plate chips"
+    above. `loading`, `modality`, the settings row and the plate inventory are
+    all seeded, and `LOG SET` does not move when the chips appear.
+15. ~~**The settings that matter in a gym.**~~ **Done and verified on device** -
+    see "The gym settings" above. Three of the five needed Java, and rest sound
+    did not exist at all until this stage.
+16. ~~**Backups, and the cutover procedure itself.**~~ **Done and verified on
+    device**, including surviving an uninstall - see "Synced-folder export"
+    above and "The cutover procedure" for the written-down steps. The cutover
+    itself has **not** been performed: the device database is still disposable.
 
-Then, still blocking cutover:
-
-16. **Backups, and the cutover procedure itself.**
-    - `VACUUM INTO` to a synced folder on launch and after each session, plus a
-      manual export. App-private storage does not survive uninstall, which is
-      the actual threat.
-    - ~~Device migrations take no backup.~~ **Done and verified on device.**
-      `src/db/backup.ts` takes a `VACUUM INTO` copy before `open.ts` applies
-      anything pending, named for the migration it is protecting against. It
-      **fails closed**: if the plugin cannot report the database path, the app
-      refuses to migrate rather than migrating unprotected. Note this guards
-      against a bad migration, **not** against uninstall, since the copies sit
-      in the same app-private directory. Nothing prunes them yet; they only
-      appear when a migration is pending, so there will be few.
-    - Write down the cutover itself: push the final imported database, verify
-      counts on device, then stop re-importing forever. `npm run import` already
-      refuses once any `sets.source = 'native'` row exists.
 17. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
-    plus the `debug` screen in `App.tsx`. `DbSmoke` is still the only on-device
-    proof of the `DENSE_RANK` window function `recentPerformance` depends on, so
-    it earns its place until that is retired or proved another way. ~~The
+    plus the `debug` screen in `App.tsx`. **`DbSmoke` has stopped being the only
+    on-device proof of the `DENSE_RANK` window function**: the exercise detail
+    screen from stage 12 runs the same window function on the phone over the
+    real history, so the spike no longer earns its place. `undoLastSet` then has
+    no caller at all and goes with it. ~~The
     `debug` link is still in the header and is reachable in a demo.~~ **Done in
     11b**: the label is gone, and the way in is five taps on an unlabelled
     corner of the app bar.
 
 ### Not blocking cutover
+
+- **Guidance has to be reachable from the logging screen**, not only from the
+  library and the overview card menu. The cues are for the moment the bar is in
+  front of you, and today reaching them mid-workout means backing out to the
+  overview and opening a menu. **It must not be always visible**: the exercise
+  screen is three regions and the whole design rule is that nothing moves under
+  a thumb, so this is a disclosure the user opens, not a block of text sitting
+  above the slots. Candidates: an info affordance in the pinned header opening
+  the guidance in an `ActionSheet`, or the guidance as a card at the end of the
+  history scroller. The sheet is the safer of the two, because it costs the
+  layout no height at all.
+- **Home is unreachable while a workout is live**, and `Exercises` and
+  `Settings` both live on Home, so neither can be opened mid-workout. Found
+  while verifying stage 15.
 
 - Progression cue is currently advisory text only, in the workout and now on
   Home. It could pre-fill the next session's weight, which is the natural payoff
