@@ -42,10 +42,18 @@ export type Screen =
   /** What a workout added up to. **Not a save** - see `SessionSummary.tsx`. */
   | { kind: 'summary'; sessionId: number }
   /**
-   * Choose an exercise for a live workout. With `replacing` set it swaps that
-   * exercise in place, keeping its sets, reps and rest; without, it appends.
+   * Choose an exercise, for a live workout or for a template. With `replacing`
+   * set it swaps that exercise in place, keeping its sets, reps and rest;
+   * without, it appends.
+   *
+   * One member rather than two: the list is identical and only the write
+   * differs, which is the same reuse `setExercisePlan` is built on.
    */
-  | { kind: 'picker'; sessionId: number; replacing?: number }
+  | {
+      kind: 'picker'
+      target: { session: number } | { template: number }
+      replacing?: number
+    }
   /**
    * A template, read-only, before any session exists.
    *
@@ -62,6 +70,18 @@ export type Screen =
   | { kind: 'exercise'; sessionId: number; index: number }
   /** Every finished workout, newest first. Rows open the summary. */
   | { kind: 'history' }
+  /** All 87 exercises. Rows open the detail screen rather than picking one. */
+  | { kind: 'library' }
+  /** One exercise: its guidance, its totals and every session of it. */
+  | { kind: 'exerciseInfo'; exerciseId: number }
+  /**
+   * Edit the programme itself: add, cut, reorder, and set what each exercise
+   * asks for. Separate from the read-only preview because the preview's job is
+   * to be the thing you commit to.
+   */
+  | { kind: 'templateEdit'; templateId: number }
+  /** The handful of settings that matter under a bar. */
+  | { kind: 'settings' }
 
 interface NavState {
   /** Root first. Empty means the root screen, which is not a member. */

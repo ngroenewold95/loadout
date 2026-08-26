@@ -13,6 +13,16 @@ import {
   activeSession,
   addSessionExercise,
   discardSession,
+  addTemplateExercise,
+  removeTemplateExercise,
+  replaceTemplateExercise,
+  reorderTemplateExercises,
+  setExercisePlan,
+  sessionPlan,
+  templatePlan,
+  exerciseDetail,
+  exerciseHistory,
+  exerciseStats,
   removeSessionExercise,
   reorderSessionExercises,
   replaceSessionExercise,
@@ -866,5 +876,294 @@ describe('templates and picker', () => {
 
     const found = await searchExercises(db, 'lift')
     expect(found.map((e) => e.name)).toEqual(['Recent Lift', 'Old Lift'])
+  })
+})
+
+describe('exercise detail', () => {
+  it('pages history by whole sessions, not by rows', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-06-01', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+    await seedHistory(squat, '2026-07-01', [
+      { weightKg: 105, reps: 5 },
+      { weightKg: 105, reps: 5 },
+      { weightKg: 105, reps: 4 },
+    ])
+    await seedHistory(squat, '2026-08-01', [{ weightKg: 110, reps: 5 }])
+
+    const first = await exerciseHistory(db, squat, { sessions: 2 })
+    expect(first.map((s) => s.localDate)).toEqual(['2026-08-01', '2026-07-01'])
+    // The middle session has three sets. A row limit would have cut it short.
+    expect(first[1].sets).toHaveLength(3)
+
+    const next = await exerciseHistory(db, squat, { sessions: 2, skip: 2 })
+    expect(next.map((s) => s.localDate)).toEqual(['2026-06-01'])
+  })
+
+  it('leaves out deleted sets and deleted sessions', async () => {
+    const squat = await seedExercise('Squat')
+    const kept = await seedHistory(squat, '2026-07-01', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+    const dropped = await seedHistory(squat, '2026-08-01', [{ weightKg: 110, reps: 5 }])
+    await db.exec('UPDATE sessions SET deleted_at = ? WHERE id = ?', [Date.now(), dropped])
+    await db.exec('UPDATE sets SET deleted_at = ? WHERE session_id = ? AND set_index = 1', [
+      Date.now(),
+      kept,
+    ])
+
+    const history = await exerciseHistory(db, squat, { sessions: 10 })
+    expect(history).toHaveLength(1)
+    expect(history[0].sets).toHaveLength(1)
+  })
+
+  it('inverts best load for an assisted exercise', async () => {
+    // A higher number on an Assisted Chinup is an EASIER set, so "best" has to
+    // be the least assistance. 115 lb in 2023 down to 20 lb in 2026 is progress.
+    const assisted = await seedExercise('Assisted Chinup', { loadMode: 'assistance' })
+    await seedHistory(assisted, '2023-01-01', [{ weightKg: 52, reps: 9, loadMode: 'assistance' }])
+    await seedHistory(assisted, '2026-01-01', [{ weightKg: 9, reps: 7, loadMode: 'assistance' }])
+
+    const stats = await exerciseStats(db, assisted)
+    expect(stats?.bestWeightKg).toBeNull()
+    expect(stats?.leastAssistKg).toBe(9)
+    // Assistance contributes nothing to volume either, by the same argument.
+    expect(stats?.volumeKg).toBe(0)
+  })
+
+  it('counts sets and sessions, and spans the whole history', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2021-07-06', [{ weightKg: 60, reps: 5 }])
+    await seedHistory(squat, '2026-08-01', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 8 },
+    ])
+
+    const stats = await exerciseStats(db, squat)
+    expect(stats).toMatchObject({
+      totalSets: 3,
+      sessionCount: 2,
+      firstDate: '2021-07-06',
+      lastDate: '2026-08-01',
+      bestWeightKg: 100,
+      bestReps: 8,
+    })
+    expect(stats?.volumeKg).toBe(60 * 5 + 100 * 5 + 100 * 8)
+  })
+
+  it('reads the metadata a detail screen renders, and null guidance is fine', async () => {
+    const squat = await seedExercise('Squat', { restS: 180, base: 20 })
+    const detail = await exerciseDetail(db, squat)
+    expect(detail).toMatchObject({
+      name: 'Squat',
+      defaultRestS: 180,
+      baseWeightKg: 20,
+      guidance: null,
+    })
+    expect(await exerciseDetail(db, squat + 999)).toBeNull()
+  })
+})
+
+describe('editing a template', () => {
+  /** A template with two exercises on it, plus their ids. */
+  async function seedTemplate(): Promise<{
+    templateId: number
+    squat: number
+    row: number
+  }> {
+    const squat = await seedExercise('Squat', { restS: 240 })
+    const row = await seedExercise('Machine Row', { restS: 180 })
+    const now = Date.now()
+    const { lastInsertId: templateId } = await db.exec(
+      'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, 0, ?, ?)',
+      ['Day A', now, now],
+    )
+    for (const [order, exerciseId] of [squat, row].entries()) {
+      await db.exec(
+        `INSERT INTO template_exercises (template_id, exercise_id, order_index, target_sets,
+                                         target_rep_min, target_rep_max, created_at, updated_at)
+         VALUES (?, ?, ?, 2, 5, 8, ?, ?)`,
+        [templateId, exerciseId, order, now, now],
+      )
+    }
+    return { templateId, squat, row }
+  }
+
+  it('edits sets, rep range and rest', async () => {
+    const { templateId, squat } = await seedTemplate()
+    await setExercisePlan(db, templatePlan(templateId), squat, {
+      targetSets: 3,
+      targetRepMin: 6,
+      targetRepMax: 10,
+      restS: 180,
+    })
+
+    const [row] = await listTemplateExercises(db, templateId)
+    expect(row).toMatchObject({
+      name: 'Squat',
+      targetSets: 3,
+      targetRepMin: 6,
+      targetRepMax: 10,
+      restS: 180,
+    })
+  })
+
+  it('leaves out what the patch does not mention', async () => {
+    // An absent key means leave it alone; an explicit null means clear it.
+    const { templateId, squat } = await seedTemplate()
+    await setExercisePlan(db, templatePlan(templateId), squat, { restS: 90 })
+    const [kept] = await listTemplateExercises(db, templateId)
+    expect(kept).toMatchObject({ targetRepMin: 5, targetRepMax: 8, restS: 90 })
+
+    await setExercisePlan(db, templatePlan(templateId), squat, { targetRepMin: null, targetRepMax: null })
+    const [cleared] = await listTemplateExercises(db, templateId)
+    expect(cleared).toMatchObject({ targetRepMin: null, targetRepMax: null, restS: 90 })
+  })
+
+  it('refuses a rep range that ends below where it starts', async () => {
+    const { templateId, squat } = await seedTemplate()
+    await expect(
+      setExercisePlan(db, templatePlan(templateId), squat, { targetRepMin: 8, targetRepMax: 5 }),
+    ).rejects.toThrow(/ends below/)
+  })
+
+  it('edits a live session through the same function', async () => {
+    // The reuse this stage exists for: one editor, one writer, two tables.
+    const squat = await seedExercise('Squat')
+    const sessionId = await startSession(db, { name: 'Day A' })
+    await addSessionExercise(db, sessionId, squat, 2)
+
+    await setExercisePlan(db, sessionPlan(sessionId), squat, { targetRepMin: 5, targetRepMax: 8 })
+    const [row] = await listSessionExercises(db, sessionId)
+    expect(row).toMatchObject({ targetRepMin: 5, targetRepMax: 8 })
+  })
+
+  it('appends, replaces and reorders without touching the other rows', async () => {
+    const { templateId, squat, row } = await seedTemplate()
+    const press = await seedExercise('Machine Chest Press', { restS: 150 })
+
+    await addTemplateExercise(db, templateId, press)
+    let rows = await listTemplateExercises(db, templateId)
+    expect(rows.map((r) => r.name)).toEqual(['Squat', 'Machine Row', 'Machine Chest Press'])
+    // Inherits the exercise's own rest, and gets no rep target.
+    expect(rows[2]).toMatchObject({ restS: 150, targetRepMin: null, targetRepMax: null })
+
+    const curl = await seedExercise('Machine Preacher Curl')
+    await replaceTemplateExercise(db, templateId, row, curl)
+    rows = await listTemplateExercises(db, templateId)
+    expect(rows.map((r) => r.name)).toEqual(['Squat', 'Machine Preacher Curl', 'Machine Chest Press'])
+    // Position and targets survive the swap; only the movement changed.
+    expect(rows[1]).toMatchObject({ orderIndex: 1, targetSets: 2, targetRepMin: 5 })
+
+    await reorderTemplateExercises(db, templateId, [press, squat, curl])
+    rows = await listTemplateExercises(db, templateId)
+    expect(rows.map((r) => r.orderIndex)).toEqual([0, 1, 2])
+    expect(rows.map((r) => r.name)).toEqual(['Machine Chest Press', 'Squat', 'Machine Preacher Curl'])
+  })
+
+  it('removes softly, never hard', async () => {
+    const { templateId, squat } = await seedTemplate()
+    await removeTemplateExercise(db, templateId, squat)
+
+    expect((await listTemplateExercises(db, templateId)).map((r) => r.name)).toEqual([
+      'Machine Row',
+    ])
+    // The row is still there, which is what makes this reversible and what
+    // keeps any later question about what the programme used to say answerable.
+    const [raw] = await db.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM template_exercises WHERE template_id = ? AND deleted_at IS NOT NULL',
+      [templateId],
+    )
+    expect(raw.n).toBe(1)
+  })
+
+  it('does not move a live session that was started from the template', async () => {
+    // The regression this stage is most likely to cause: `session_exercises` is
+    // a snapshot, so editing the programme mid-workout must change nothing.
+    const { templateId, squat } = await seedTemplate()
+    const sessionId = await startSession(db, { templateId, name: 'Day A' })
+    const before = await listSessionExercises(db, sessionId)
+
+    await setExercisePlan(db, templatePlan(templateId), squat, { targetSets: 5, restS: 30 })
+    await removeTemplateExercise(db, templateId, squat)
+
+    expect(await listSessionExercises(db, sessionId)).toEqual(before)
+  })
+})
+
+describe('the base weight chain', () => {
+  /** A template holding one exercise, so the resolved base can be read back. */
+  async function planned(
+    name: string,
+    columns: string,
+    values: string,
+  ): Promise<number | null> {
+    const now = Date.now()
+    const { lastInsertId: exerciseId } = await db.exec(
+      `INSERT INTO exercises (name${columns}, created_at, updated_at)
+       VALUES (?${values}, ?, ?)`,
+      [name, now, now],
+    )
+    const { lastInsertId: templateId } = await db.exec(
+      'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, 0, ?, ?)',
+      [`Day for ${name}`, now, now],
+    )
+    await db.exec(
+      `INSERT INTO template_exercises (template_id, exercise_id, order_index, created_at, updated_at)
+       VALUES (?, ?, 0, ?, ?)`,
+      [templateId, exerciseId, now, now],
+    )
+    const [row] = await listTemplateExercises(db, templateId)
+    return row.baseWeightKg
+  }
+
+  const globalBar = async (kg: number) => {
+    const now = Date.now()
+    await db.exec(
+      `INSERT INTO app_settings (id, default_bar_weight_kg, created_at, updated_at)
+       VALUES (1, ?, ?, ?)`,
+      [kg, now, now],
+    )
+  }
+
+  it('prefers the exercise over the global bar', async () => {
+    await globalBar(20.41)
+    // A trap bar is not a barbell's 45 lb, which is the case that made the
+    // per-exercise override exist in the first place.
+    expect(
+      await planned('Trap Bar Deadlift', ", modality, default_base_weight_kg", ", 'barbell', 24.95"),
+    ).toBeCloseTo(24.95, 4)
+  })
+
+  it('falls back to the global bar only for a barbell', async () => {
+    await globalBar(20.41)
+    expect(await planned('Barbell Squat', ', modality', ", 'barbell'")).toBeCloseTo(20.41, 4)
+    // A plate-loaded sled with no recorded base must show NO base rather than
+    // silently claiming a 45 lb bar it does not have.
+    expect(await planned('Machine Row', ', modality', ", 'machine'")).toBeNull()
+  })
+
+  it('resolves to nothing at all when there is no settings row', async () => {
+    expect(await planned('Barbell Squat', ', modality', ", 'barbell'")).toBeNull()
+  })
+
+  it('snapshots the resolved base onto the set, not the raw column', async () => {
+    // The chip and the stored value have to agree, which is the whole reason
+    // the chain is one expression rather than two copies.
+    await globalBar(20.41)
+    const now = Date.now()
+    const { lastInsertId: exerciseId } = await db.exec(
+      `INSERT INTO exercises (name, modality, created_at, updated_at)
+       VALUES ('Barbell Squat', 'barbell', ?, ?)`,
+      [now, now],
+    )
+    const sessionId = await startSession(db, { name: 'Day A' })
+    await logSet(db, { sessionId, exerciseId, weightKg: 100, reps: 5 })
+
+    const [set] = await listSessionSets(db, sessionId)
+    expect(set.baseWeightKg).toBeCloseTo(20.41, 4)
   })
 })

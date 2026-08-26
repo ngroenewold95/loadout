@@ -15,7 +15,10 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
-import { getDb } from '../db/open.ts'
+import { currentDatabaseUrl, getDb } from '../db/open.ts'
+import { exportNow } from '../native/backup.ts'
+import { RestTimer } from '../native/restTimer.ts'
+import { useWorkout } from './workout.ts'
 import {
   activeSession,
   addSessionExercise,
@@ -24,6 +27,20 @@ import {
   reorderSessionExercises,
   replaceSessionExercise,
   discardSession,
+  getSettings,
+  setSettings,
+  type AppSettings,
+  listPlateInventory,
+  addTemplateExercise,
+  removeTemplateExercise,
+  replaceTemplateExercise,
+  reorderTemplateExercises,
+  setExercisePlan,
+  sessionPlan,
+  templatePlan,
+  exerciseDetail,
+  exerciseHistory,
+  exerciseStats,
   endSession,
   historyStats,
   localDateOf,
@@ -41,6 +58,7 @@ import {
   setsByMuscle,
   startSession,
   updateSet,
+  type ExercisePlanPatch,
   type LogSetInput,
   type UpdateSetInput,
 } from '../db/repo.ts'
@@ -59,6 +77,12 @@ export const keys = {
   /** Everything Home says about the past. One key so one invalidation covers
    *  the list, the totals and the muscle split together. */
   history: ['history'] as const,
+  /** The library, the picker search and every exercise detail screen. */
+  exercises: ['exercises'] as const,
+  exercise: (id: number) => ['exercises', id] as const,
+  /** The settings row, and the plates. Both read by the logging screen. */
+  settings: ['settings'] as const,
+  plates: ['plates'] as const,
 }
 
 export function useTemplates() {
@@ -97,10 +121,82 @@ export function useActiveSession() {
  * query is a couple of milliseconds against a local file, so the flash of an
  * empty list would be the only thing anyone noticed.
  */
-export function useExerciseSearch(term: string) {
+export function useExerciseSearch(term: string, limit?: number) {
   return useQuery({
-    queryKey: ['exercises', 'search', term] as const,
-    queryFn: async () => searchExercises(await getDb(), term),
+    queryKey: [...keys.exercises, 'search', term, limit ?? null] as const,
+    queryFn: async () => searchExercises(await getDb(), term, limit),
+    placeholderData: (previous) => previous,
+  })
+}
+
+/**
+ * The settings row.
+ *
+ * Null until `seedDefaults` has run, and every caller falls back to the
+ * constant it used before this existed rather than rendering nothing.
+ */
+export function useSettings() {
+  return useQuery({
+    queryKey: keys.settings,
+    queryFn: async () => getSettings(await getDb()),
+  })
+}
+
+/**
+ * Change a setting.
+ *
+ * Written straight through to SQLite rather than held in React state: a gym
+ * setting that did not survive a force-stop would be worse than none, and the
+ * backup story is `VACUUM INTO`, which only covers the database.
+ */
+export function useSetSettings() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async (patch: Partial<AppSettings>) => setSettings(await getDb(), patch),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.settings })
+    },
+  })
+}
+
+/** The plates owned, in the shape `platesFor` takes. */
+export function usePlateInventory() {
+  return useQuery({
+    queryKey: keys.plates,
+    queryFn: async () => listPlateInventory(await getDb()),
+  })
+}
+
+/** One exercise's metadata and its authored guidance. */
+export function useExerciseDetail(exerciseId: number | null | undefined) {
+  return useQuery({
+    queryKey: keys.exercise(exerciseId ?? -1),
+    enabled: exerciseId != null,
+    queryFn: async () => exerciseDetail(await getDb(), exerciseId!),
+  })
+}
+
+/** What five years of one exercise came to. */
+export function useExerciseStats(exerciseId: number | null | undefined) {
+  return useQuery({
+    queryKey: [...keys.exercise(exerciseId ?? -1), 'stats'] as const,
+    enabled: exerciseId != null,
+    queryFn: async () => exerciseStats(await getDb(), exerciseId!),
+  })
+}
+
+/**
+ * One exercise's sessions, newest first.
+ *
+ * `sessions` grows the way `WorkoutHistory` grows its limit rather than
+ * chasing a cursor, and the repo pages by rank so the extra pages can only
+ * ever be whole sessions.
+ */
+export function useExerciseHistory(exerciseId: number | null | undefined, sessions: number) {
+  return useQuery({
+    queryKey: [...keys.exercise(exerciseId ?? -1), 'history', sessions] as const,
+    enabled: exerciseId != null,
+    queryFn: async () => exerciseHistory(await getDb(), exerciseId!, { sessions }),
     placeholderData: (previous) => previous,
   })
 }
@@ -243,6 +339,8 @@ const invalidateAfterSet = (client: QueryClient, sessionId: number) => {
   void client.invalidateQueries({ queryKey: ['recentPerformance'] })
   // Home's totals and its readiness list both count sets.
   void client.invalidateQueries({ queryKey: keys.history })
+  // So do the library's per-exercise counts and the detail screen's history.
+  void client.invalidateQueries({ queryKey: keys.exercises })
 }
 
 export function useStartSession() {
@@ -337,8 +435,74 @@ export function useEditSessionPlan(sessionId: number) {
       reorderSessionExercises(await getDb(), sessionId, v.exerciseIds),
     onSuccess: invalidate,
   })
+  const setPlan = useMutation({
+    mutationFn: async (v: { exerciseId: number; patch: ExercisePlanPatch }) =>
+      setExercisePlan(await getDb(), sessionPlan(sessionId), v.exerciseId, v.patch),
+    onSuccess: invalidate,
+  })
 
-  return { add, remove, replace, reorder }
+  return { add, remove, replace, reorder, setPlan }
+}
+
+/**
+ * The same five edits, against the programme instead of one performance of it.
+ *
+ * **Deliberately does not invalidate `sessionExercises`.** A live session holds
+ * its own snapshot of the plan, so a template edit must leave the workout on
+ * screen exactly where it was; invalidating would refetch rows that did not
+ * change and imply they might have.
+ */
+export function useEditTemplatePlan(templateId: number) {
+  const client = useQueryClient()
+  const invalidate = () => {
+    void client.invalidateQueries({ queryKey: keys.templateExercises(templateId) })
+    // Home lists each template with its exercise count.
+    void client.invalidateQueries({ queryKey: keys.templates })
+  }
+
+  const add = useMutation({
+    mutationFn: async (v: { exerciseId: number; targetSets?: number | null }) =>
+      addTemplateExercise(await getDb(), templateId, v.exerciseId, v.targetSets ?? null),
+    onSuccess: invalidate,
+  })
+  const remove = useMutation({
+    mutationFn: async (v: { exerciseId: number }) =>
+      removeTemplateExercise(await getDb(), templateId, v.exerciseId),
+    onSuccess: invalidate,
+  })
+  const replace = useMutation({
+    mutationFn: async (v: { exerciseId: number; withExerciseId: number }) =>
+      replaceTemplateExercise(await getDb(), templateId, v.exerciseId, v.withExerciseId),
+    onSuccess: invalidate,
+  })
+  const reorder = useMutation({
+    mutationFn: async (v: { exerciseIds: number[] }) =>
+      reorderTemplateExercises(await getDb(), templateId, v.exerciseIds),
+    onSuccess: invalidate,
+  })
+  const setPlan = useMutation({
+    mutationFn: async (v: { exerciseId: number; patch: ExercisePlanPatch }) =>
+      setExercisePlan(await getDb(), templatePlan(templateId), v.exerciseId, v.patch),
+    onSuccess: invalidate,
+  })
+
+  return { add, remove, replace, reorder, setPlan }
+}
+
+/**
+ * Stop a rest that belongs to a workout that no longer exists.
+ *
+ * Measured on device: discarding a workout left the pill counting and the
+ * foreground service alive, because the rest is owned by the service and
+ * nothing told it the session had gone. Both the native timer and the store
+ * have to be cleared - the service keeps counting without the first, and the
+ * app bar keeps drawing without the second.
+ */
+const stopRest = () => {
+  void RestTimer.cancel().catch(() => {
+    // Web has no plugin, and a rest that was already over is not an error.
+  })
+  useWorkout.getState().clearRest()
 }
 
 export function useEndSession() {
@@ -354,6 +518,12 @@ export function useEndSession() {
       // Finishing is what moves a session INTO the history: every read there
       // filters on `ended_at_utc IS NOT NULL`.
       void client.invalidateQueries({ queryKey: keys.history })
+      stopRest()
+      // And a copy leaves the device. Fire and forget, and deliberately not
+      // awaited: the summary is on screen and nothing about it depends on this.
+      void (async () => {
+        await exportNow(await getDb(), currentDatabaseUrl())
+      })().catch((e: unknown) => console.warn('[export] after session', e))
     },
   })
 }
@@ -368,6 +538,7 @@ export function useDiscardSession() {
       void client.invalidateQueries({ queryKey: ['recentPerformance'] })
       void client.invalidateQueries({ queryKey: keys.session(sessionId) })
       void client.invalidateQueries({ queryKey: keys.history })
+      stopRest()
     },
   })
 }

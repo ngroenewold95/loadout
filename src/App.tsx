@@ -1,15 +1,19 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useActiveSession } from './state/queries.ts'
+import { useActiveSession, useSettings } from './state/queries.ts'
 import { useCurrentScreen, useNav, useSystemBack, type Screen } from './state/nav.ts'
 import { ExerciseView } from './ui/ExerciseView'
-import { TemplatePreview, WorkoutOverview } from './ui/WorkoutOverview'
+import { TemplateEditor, TemplatePreview, WorkoutOverview } from './ui/WorkoutOverview'
 import { AppHeader } from './ui/AppHeader'
 import { Home } from './ui/Home'
 import { SessionSummary } from './ui/SessionSummary'
-import { SessionExercisePicker } from './ui/ExercisePicker'
+import { SessionExercisePicker, TemplateExercisePicker } from './ui/ExercisePicker'
 import { AllWorkouts } from './ui/WorkoutHistory'
+import { ExerciseLibrary } from './ui/ExerciseLibrary'
+import { Settings } from './ui/Settings'
+import { ExerciseDetail } from './ui/ExerciseDetail'
 import { RestPill } from './ui/RestPill'
+import { setKeepAwake } from './native/screen.ts'
 import { DbSmoke } from './ui/DbSmoke'
 import { TimerSpike } from './ui/TimerSpike'
 
@@ -34,14 +38,34 @@ const SCREEN_TITLES: Record<Screen['kind'], string> = {
   template: 'Workout',
   exercise: 'Exercise',
   history: 'Workouts',
+  library: 'Exercises',
+  templateEdit: 'Edit workout',
+  settings: 'Settings',
+  exerciseInfo: 'Exercise',
 }
 
 function Shell() {
   const { data: session, isLoading } = useActiveSession()
+  const { data: settings } = useSettings()
   const screen = useCurrentScreen()
   const push = useNav((s) => s.push)
 
   useSystemBack()
+
+  /**
+   * Keep the screen on while a workout is live, if that is asked for.
+   *
+   * Scoped to the session rather than to the app: a phone that never sleeps
+   * while Home is open is a flat battery, and the reason to want this at all is
+   * that the next set is two minutes away and the phone is on the bench.
+   */
+  const keepAwake = Boolean(session) && (settings?.keepScreenOn ?? false)
+  useEffect(() => {
+    void setKeepAwake(keepAwake)
+    return () => {
+      void setKeepAwake(false)
+    }
+  }, [keepAwake])
 
   return (
     // `h-full`, not `min-h-full`: the shell is exactly the viewport so that a
@@ -93,14 +117,29 @@ function Shell() {
         ) : screen?.kind === 'summary' ? (
           <SessionSummary sessionId={screen.sessionId} />
         ) : screen?.kind === 'picker' ? (
-          <SessionExercisePicker
-            sessionId={screen.sessionId}
-            replacing={screen.replacing}
-          />
+          'session' in screen.target ? (
+            <SessionExercisePicker
+              sessionId={screen.target.session}
+              replacing={screen.replacing}
+            />
+          ) : (
+            <TemplateExercisePicker
+              templateId={screen.target.template}
+              replacing={screen.replacing}
+            />
+          )
         ) : screen?.kind === 'template' ? (
           <TemplatePreview templateId={screen.templateId} />
+        ) : screen?.kind === 'templateEdit' ? (
+          <TemplateEditor templateId={screen.templateId} />
         ) : screen?.kind === 'history' ? (
           <AllWorkouts />
+        ) : screen?.kind === 'settings' ? (
+          <Settings />
+        ) : screen?.kind === 'library' ? (
+          <ExerciseLibrary />
+        ) : screen?.kind === 'exerciseInfo' ? (
+          <ExerciseDetail exerciseId={screen.exerciseId} />
         ) : isLoading ? (
           <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
         ) : screen?.kind === 'exercise' && session ? (

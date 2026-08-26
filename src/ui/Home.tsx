@@ -58,6 +58,29 @@ export function Home() {
           ))}
       </div>
 
+      {/* Not a workout, so it sits under the templates rather than among
+          them: the library is for looking something up, which is a different
+          errand from training. */}
+      <button
+        className="bg-surface-1 active:bg-surface-3 rounded-xl px-4 py-4 text-left"
+        onClick={() => push({ kind: 'library' })}
+      >
+        <span className="block font-medium">Exercises</span>
+        <span className="text-text-dim block text-sm opacity-70">
+          How to do them, and everything ever logged
+        </span>
+      </button>
+
+      <button
+        className="bg-surface-1 active:bg-surface-3 rounded-xl px-4 py-4 text-left"
+        onClick={() => push({ kind: 'settings' })}
+      >
+        <span className="block font-medium">Settings</span>
+        <span className="text-text-dim block text-sm opacity-70">
+          Increment, screen, and the rest timer
+        </span>
+      </button>
+
       {/* Below the templates, always. Starting a workout is what Home is for,
           and two taps per set is the constraint that decides everything - the
           history is what the screen says while you are not doing that. */}

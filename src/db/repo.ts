@@ -15,7 +15,7 @@
  *   params array instead.
  */
 import type { Db } from './driver.ts'
-import type { LoadMode, SetType, TrackingType } from './schema.ts'
+import type { Loading, LoadMode, SetType, TrackingType } from './schema.ts'
 import type { Unit } from '../logic/units.ts'
 
 /** Sentinel for "exclude nothing" - no row has a negative rowid here. */
@@ -31,6 +31,128 @@ export function localDateOf(date = new Date()): string {
 }
 
 const placeholders = (n: number) => Array(n).fill('?').join(', ')
+
+/**
+ * How the load is made up before any plates go on, as one SQL expression.
+ *
+ * Most specific first, and **defined once** because two hand-written copies
+ * would drift: the chip row above the entry bar and the `base_weight_kg`
+ * snapshotted into a set have to agree or the history stops meaning what it
+ * says.
+ *
+ * 1. the exercise's own `default_base_weight_kg` - a trap bar, a Smith
+ *    carriage, a plate-loaded sled's own frame
+ * 2. the global bar weight, **only for `modality = 'barbell'`**
+ *
+ * The gate on step 2 is load-bearing. The reference app keeps a single global
+ * `Equipment weight: 45 Lb` with no override anywhere, which is wrong the
+ * moment a trap bar is involved, and a sled whose base is unrecorded must show
+ * NO base rather than silently claiming 45 lb.
+ *
+ * Expects the exercises table aliased `e`.
+ */
+const BASE_WEIGHT_KG = `COALESCE(
+        e.default_base_weight_kg,
+        CASE WHEN e.modality = 'barbell'
+             THEN (SELECT default_bar_weight_kg FROM app_settings WHERE id = 1) END
+      )`
+
+// ------------------------------------------------- settings and the plates
+
+export interface AppSettings {
+  defaultBarWeightKg: number | null
+  weightIncrementKg: number | null
+  keepScreenOn: boolean
+  overlayInBackground: boolean
+  restVibrate: boolean
+  restSound: boolean
+}
+
+/**
+ * The one settings row, or null before `seedDefaults` has ever run.
+ *
+ * Every caller must tolerate null and fall back to its own constant. A device
+ * pushed from an older lineage opens once with no row, and a screen that
+ * assumed one would render blank rather than the defaults it has always used.
+ */
+export async function getSettings(db: Db): Promise<AppSettings | null> {
+  const row = await db.queryOne<{
+    defaultBarWeightKg: number | null
+    weightIncrementKg: number | null
+    keepScreenOn: number
+    overlayInBackground: number
+    restVibrate: number
+    restSound: number
+  }>(
+    `SELECT default_bar_weight_kg AS "defaultBarWeightKg",
+            weight_increment_kg AS "weightIncrementKg",
+            keep_screen_on AS "keepScreenOn",
+            overlay_in_background AS "overlayInBackground",
+            rest_vibrate AS "restVibrate",
+            rest_sound AS "restSound"
+       FROM app_settings
+      WHERE id = 1 AND deleted_at IS NULL`,
+  )
+  if (!row) return null
+  // SQLite has no boolean type; the CHECKs keep these to 0 or 1.
+  return {
+    defaultBarWeightKg: row.defaultBarWeightKg,
+    weightIncrementKg: row.weightIncrementKg,
+    keepScreenOn: row.keepScreenOn === 1,
+    overlayInBackground: row.overlayInBackground === 1,
+    restVibrate: row.restVibrate === 1,
+    restSound: row.restSound === 1,
+  }
+}
+
+/**
+ * Change one or more settings.
+ *
+ * The column list is a closed record in code and only the keys actually present
+ * in the patch are written, so an absent key means leave it alone. Values bind
+ * positionally like everything else here.
+ */
+export async function setSettings(db: Db, patch: Partial<AppSettings>): Promise<void> {
+  const columns: Record<keyof AppSettings, string> = {
+    defaultBarWeightKg: 'default_bar_weight_kg',
+    weightIncrementKg: 'weight_increment_kg',
+    keepScreenOn: 'keep_screen_on',
+    overlayInBackground: 'overlay_in_background',
+    restVibrate: 'rest_vibrate',
+    restSound: 'rest_sound',
+  }
+  const fields = (Object.keys(columns) as (keyof AppSettings)[]).filter((key) => key in patch)
+  if (fields.length === 0) return
+
+  await db.exec(
+    `UPDATE app_settings
+        SET ${fields.map((f) => `${columns[f]} = ?`).join(', ')}, updated_at = ?
+      WHERE id = 1`,
+    [
+      ...fields.map((f) => {
+        const value = patch[f]
+        // The booleans are stored as 0/1 under a CHECK; the weights are reals.
+        return typeof value === 'boolean' ? (value ? 1 : 0) : (value ?? null)
+      }),
+      Date.now(),
+    ],
+  )
+}
+
+/**
+ * The plates owned, heaviest first.
+ *
+ * `count` is the total across both sides and `platesFor` halves it, so the
+ * shape here is exactly `PlateStock` and there is no mapping layer to drift.
+ */
+export function listPlateInventory(db: Db): Promise<{ kg: number; count: number }[]> {
+  return db.query<{ kg: number; count: number }>(
+    `SELECT weight_kg AS "kg", count
+       FROM plate_inventory
+      WHERE deleted_at IS NULL
+      ORDER BY weight_kg DESC`,
+  )
+}
 
 // ---------------------------------------------------------------- templates
 
@@ -97,6 +219,10 @@ export interface TemplateExerciseRow {
   implementCount: number
   preferredUnit: Unit
   baseWeightKg: number | null
+  /** How weight is added. Null until the equipment seeder knows; no chips then. */
+  loading: Loading | null
+  /** Per-exercise drag-handle step. Null means fall back to the setting. */
+  incrementKg: number | null
   /** Free text, often null. Feed it to `muscleMark`, which degrades safely. */
   primaryMuscle: string | null
 }
@@ -118,7 +244,9 @@ export function listTemplateExercises(
             e.default_load_mode AS "loadMode",
             e.implement_count AS "implementCount",
             e.preferred_unit AS "preferredUnit",
-            e.default_base_weight_kg AS "baseWeightKg",
+            ${BASE_WEIGHT_KG} AS "baseWeightKg",
+            e.loading,
+            e.default_increment_kg AS "incrementKg",
             e.primary_muscle AS "primaryMuscle"
        FROM template_exercises te
        JOIN exercises e ON e.id = te.exercise_id
@@ -155,7 +283,9 @@ export function listSessionExercises(
             e.default_load_mode AS "loadMode",
             e.implement_count AS "implementCount",
             e.preferred_unit AS "preferredUnit",
-            e.default_base_weight_kg AS "baseWeightKg",
+            ${BASE_WEIGHT_KG} AS "baseWeightKg",
+            e.loading,
+            e.default_increment_kg AS "incrementKg",
             e.primary_muscle AS "primaryMuscle"
        FROM session_exercises se
        JOIN exercises e ON e.id = se.exercise_id
@@ -293,6 +423,172 @@ export async function reorderSessionExercises(
   )
 }
 
+// --------------------------------------------------------- editing the plan
+
+/**
+ * Which list is being edited: the programme, or one performance of it.
+ *
+ * The two tables are the same shape on purpose - `session_exercises` is a copy
+ * `startSession` takes - so the editor above them is one component and the
+ * writes below them are one function. The reference app mounts the same
+ * per-exercise editor in the live workout and in the template, and that is what
+ * stops the two drifting.
+ *
+ * The table name is chosen from this closed union in code and never
+ * interpolated from an argument; every id still binds positionally.
+ */
+export type PlanScope =
+  | { table: 'session_exercises'; id: number }
+  | { table: 'template_exercises'; id: number }
+
+export const sessionPlan = (sessionId: number): PlanScope => ({
+  table: 'session_exercises',
+  id: sessionId,
+})
+export const templatePlan = (templateId: number): PlanScope => ({
+  table: 'template_exercises',
+  id: templateId,
+})
+
+/** The owning column, derived from the table rather than carried beside it. */
+const ownerColumn = (scope: PlanScope) =>
+  scope.table === 'session_exercises' ? 'session_id' : 'template_id'
+
+export interface ExercisePlanPatch {
+  targetSets?: number | null
+  targetRepMin?: number | null
+  targetRepMax?: number | null
+  restS?: number | null
+}
+
+/**
+ * Edit what an exercise is asking for: sets, rep range and rest.
+ *
+ * The rep-range columns have existed and been populated since migration 0002
+ * and nothing could edit them, which was the whole gap this closes.
+ *
+ * `max < min` is refused here rather than left to the CHECK, so the caller has
+ * something to say to the user. The CHECK stays as the backstop: this is the
+ * readable error, not the guarantee.
+ */
+export async function setExercisePlan(
+  db: Db,
+  scope: PlanScope,
+  exerciseId: number,
+  patch: ExercisePlanPatch,
+): Promise<void> {
+  const { targetRepMin, targetRepMax } = patch
+  if (targetRepMin != null && targetRepMax != null && targetRepMax < targetRepMin) {
+    throw new Error(`rep range ${targetRepMin}-${targetRepMax} ends below where it starts`)
+  }
+
+  const columns: Record<keyof ExercisePlanPatch, string> = {
+    targetSets: 'target_sets',
+    targetRepMin: 'target_rep_min',
+    targetRepMax: 'target_rep_max',
+    restS: 'rest_s',
+  }
+  // Only what was passed. An absent key means leave it alone, which is not the
+  // same as an explicit null meaning clear it.
+  const fields = (Object.keys(columns) as (keyof ExercisePlanPatch)[]).filter(
+    (key) => key in patch,
+  )
+  if (fields.length === 0) return
+
+  const now = Date.now()
+  await db.exec(
+    `UPDATE ${scope.table}
+        SET ${fields.map((f) => `${columns[f]} = ?`).join(', ')}, updated_at = ?
+      WHERE ${ownerColumn(scope)} = ? AND exercise_id = ? AND deleted_at IS NULL`,
+    [...fields.map((f) => patch[f] ?? null), now, scope.id, exerciseId],
+  )
+}
+
+/**
+ * Add an exercise to a template, at the end.
+ *
+ * Mirrors `addSessionExercise`, including inheriting the exercise's own
+ * `default_rest_s` and leaving the rep range null. A template row with no rep
+ * target is honest: it says the programme has not decided yet.
+ */
+export async function addTemplateExercise(
+  db: Db,
+  templateId: number,
+  exerciseId: number,
+  targetSets: number | null = null,
+): Promise<void> {
+  const now = Date.now()
+  await db.exec(
+    `INSERT INTO template_exercises
+       (template_id, exercise_id, order_index, target_sets, rest_s, created_at, updated_at)
+     SELECT ?, ?,
+            COALESCE((SELECT MAX(order_index) + 1 FROM template_exercises
+                       WHERE template_id = ? AND deleted_at IS NULL), 0),
+            ?, e.default_rest_s, ?, ?
+       FROM exercises e
+      WHERE e.id = ? AND e.deleted_at IS NULL`,
+    [templateId, exerciseId, templateId, targetSets, now, now, exerciseId],
+  )
+}
+
+/**
+ * Take an exercise out of a template.
+ *
+ * **Soft delete, never a hard one.** `seedPlanTemplates` writes soft deletes
+ * too, and every read in this file filters `deleted_at IS NULL`; a hard delete
+ * would also take the row out from under any historical query that ever wants
+ * to know what the programme used to say.
+ */
+export async function removeTemplateExercise(
+  db: Db,
+  templateId: number,
+  exerciseId: number,
+): Promise<void> {
+  const now = Date.now()
+  await db.exec(
+    `UPDATE template_exercises SET deleted_at = ?, updated_at = ?
+      WHERE template_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+    [now, now, templateId, exerciseId],
+  )
+}
+
+/** Swap one exercise for another, keeping its position, sets, reps and rest. */
+export async function replaceTemplateExercise(
+  db: Db,
+  templateId: number,
+  exerciseId: number,
+  withExerciseId: number,
+): Promise<void> {
+  await db.exec(
+    `UPDATE template_exercises SET exercise_id = ?, updated_at = ?
+      WHERE template_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+    [withExerciseId, Date.now(), templateId, exerciseId],
+  )
+}
+
+/**
+ * Write a new order for the whole template.
+ *
+ * Renumbered from zero in one batch for the same reason the session version is:
+ * a pairwise swap has to read its neighbour first, and two racing would leave
+ * two rows sharing an `order_index`.
+ */
+export async function reorderTemplateExercises(
+  db: Db,
+  templateId: number,
+  exerciseIds: number[],
+): Promise<void> {
+  if (exerciseIds.length === 0) return
+  const now = Date.now()
+  await db.batch(
+    exerciseIds.map((exerciseId, order) => ({
+      sql: `UPDATE template_exercises SET order_index = ?, updated_at = ?
+             WHERE template_id = ? AND exercise_id = ? AND deleted_at IS NULL`,
+      params: [order, now, templateId, exerciseId],
+    })),
+  )
+}
+
 // ---------------------------------------------------------------- exercises
 
 export interface ExerciseSummary {
@@ -304,6 +600,7 @@ export interface ExerciseSummary {
   implementCount: number
   preferredUnit: Unit
   baseWeightKg: number | null
+  loading: Loading | null
   primaryMuscle: string | null
   lastPerformedAtUtc: number | null
   setCount: number
@@ -329,7 +626,9 @@ export function searchExercises(
             e.default_rest_s AS "defaultRestS",
             e.implement_count AS "implementCount",
             e.preferred_unit AS "preferredUnit",
-            e.default_base_weight_kg AS "baseWeightKg",
+            ${BASE_WEIGHT_KG} AS "baseWeightKg",
+            e.loading,
+            e.default_increment_kg AS "incrementKg",
             e.primary_muscle AS "primaryMuscle",
             MAX(s.performed_at_utc) AS "lastPerformedAtUtc",
             COUNT(s.id) AS "setCount"
@@ -626,7 +925,7 @@ export async function logSet(db: Db, input: LogSetInput): Promise<number> {
         ?, ?, ?, ?,
         COALESCE(?, (SELECT default_load_mode FROM exercises WHERE id = ?)),
         ?, ?, ?,
-        COALESCE(?, (SELECT default_base_weight_kg FROM exercises WHERE id = ?)),
+        COALESCE(?, (SELECT ${BASE_WEIGHT_KG} FROM exercises e WHERE e.id = ?)),
         ?, ?, ?,
         'native', ?, ?)`,
     [
@@ -866,12 +1165,24 @@ export async function recentPerformance(
     [...exerciseIds, opts.excludeSessionId ?? NO_SESSION, limit],
   )
 
+  return foldByExercise(rows)
+}
+
+/**
+ * Ranked set rows into whole sessions, per exercise.
+ *
+ * Relies on the rows arriving grouped by rank, which both callers order for.
+ * Shared so the exercise detail screen and the logging screen fold their
+ * history the same way rather than twice.
+ */
+function foldByExercise(
+  rows: (PerformedSet & { localDate: string; startedAtUtc: number })[],
+): Map<number, LastPerformance[]> {
   const byExercise = new Map<number, LastPerformance[]>()
   for (const row of rows) {
     const list = byExercise.get(row.exerciseId) ?? []
     if (list.length === 0) byExercise.set(row.exerciseId, list)
-    // Rows arrive grouped by rank, so the session being filled is always the
-    // last one appended.
+    // The session being filled is always the last one appended.
     let entry = list.at(-1)
     if (!entry || entry.sessionId !== row.sessionId) {
       entry = {
@@ -886,6 +1197,128 @@ export async function recentPerformance(
     entry.sets.push(row)
   }
   return byExercise
+}
+
+/**
+ * One exercise's whole history, newest session first.
+ *
+ * **Paged by rank, not by row.** A row limit would cut a session in half and
+ * render it as though that was all that was performed; ranking whole sessions
+ * means `Load more` can only ever add complete ones. Same `DENSE_RANK` window
+ * function as `recentPerformance`, which is the one thing about the device's
+ * SQLite that had to be proved rather than assumed.
+ */
+export async function exerciseHistory(
+  db: Db,
+  exerciseId: number,
+  opts: { sessions: number; skip?: number } = { sessions: 10 },
+): Promise<LastPerformance[]> {
+  const skip = Math.max(0, opts.skip ?? 0)
+  const to = skip + Math.max(1, opts.sessions)
+
+  const rows = await db.query<PerformedSet & { localDate: string; startedAtUtc: number }>(
+    `SELECT * FROM (
+        SELECT ${SET_COLUMNS},
+               ses.local_date AS "localDate",
+               ses.started_at_utc AS "startedAtUtc",
+               DENSE_RANK() OVER (
+                 PARTITION BY s.exercise_id
+                 ORDER BY ses.started_at_utc DESC, ses.id DESC
+               ) AS rnk
+          FROM sets s
+          JOIN sessions ses ON ses.id = s.session_id
+          JOIN exercises e ON e.id = s.exercise_id
+         WHERE s.exercise_id = ?
+           AND s.deleted_at IS NULL
+           AND ses.deleted_at IS NULL
+      )
+      WHERE rnk > ? AND rnk <= ?
+      ORDER BY rnk, "setIndex", "orderIndex"`,
+    [exerciseId, skip, to],
+  )
+
+  return foldByExercise(rows).get(exerciseId) ?? []
+}
+
+export interface ExerciseDetailRow {
+  id: number
+  name: string
+  primaryMuscle: string | null
+  trackingType: TrackingType
+  loadMode: LoadMode
+  modality: string | null
+  loading: string | null
+  baseWeightKg: number | null
+  incrementKg: number | null
+  defaultRestS: number | null
+  implementCount: number
+  preferredUnit: Unit
+  guidance: string | null
+}
+
+/** Everything the detail screen says about an exercise before its history. */
+export function exerciseDetail(db: Db, exerciseId: number): Promise<ExerciseDetailRow | null> {
+  return db.queryOne<ExerciseDetailRow>(
+    `SELECT id,
+            name,
+            primary_muscle AS "primaryMuscle",
+            tracking_type AS "trackingType",
+            default_load_mode AS "loadMode",
+            modality,
+            loading,
+            default_base_weight_kg AS "baseWeightKg",
+            default_increment_kg AS "incrementKg",
+            default_rest_s AS "defaultRestS",
+            implement_count AS "implementCount",
+            preferred_unit AS "preferredUnit",
+            guidance
+       FROM exercises
+      WHERE id = ? AND deleted_at IS NULL`,
+    [exerciseId],
+  )
+}
+
+export interface ExerciseStats {
+  totalSets: number
+  sessionCount: number
+  firstDate: string | null
+  lastDate: string | null
+  /** Heaviest set, ignoring assistance rows entirely. */
+  bestWeightKg: number | null
+  /** Lightest ASSISTANCE, which is the hardest such set. Null unless assisted. */
+  leastAssistKg: number | null
+  bestReps: number | null
+  volumeKg: number | null
+}
+
+/**
+ * What five years of one exercise came to, in one statement.
+ *
+ * **`assistance` inverts and is therefore split rather than branched over.** A
+ * higher number on an Assisted Chinup is an easier set, so a single "best
+ * weight" reads backwards for the 420 imported sets that record assistance.
+ * Two columns, one of which is always null, lets the screen say the true thing
+ * for either kind without the SQL having to know which it is looking at.
+ */
+export function exerciseStats(db: Db, exerciseId: number): Promise<ExerciseStats | null> {
+  return db.queryOne<ExerciseStats>(
+    `SELECT COUNT(s.id) AS "totalSets",
+            COUNT(DISTINCT s.session_id) AS "sessionCount",
+            MIN(ses.local_date) AS "firstDate",
+            MAX(ses.local_date) AS "lastDate",
+            MAX(CASE WHEN s.load_mode = 'assistance' THEN NULL ELSE s.weight_kg END)
+              AS "bestWeightKg",
+            MIN(CASE WHEN s.load_mode = 'assistance' THEN s.weight_kg END)
+              AS "leastAssistKg",
+            MAX(s.reps) AS "bestReps",
+            ${VOLUME_KG} AS "volumeKg"
+       FROM sets s
+       JOIN sessions ses ON ses.id = s.session_id
+      WHERE s.exercise_id = ?
+        AND s.deleted_at IS NULL
+        AND ses.deleted_at IS NULL`,
+    [exerciseId],
+  )
 }
 
 export interface Prefill {

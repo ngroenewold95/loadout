@@ -12,8 +12,10 @@
 import { useState } from 'react'
 import {
   useEditSessionPlan,
+  useEditTemplatePlan,
   useExerciseSearch,
   useSessionExercises,
+  useTemplateExercises,
 } from '../state/queries.ts'
 import { relativeDay } from '../logic/dates.ts'
 import { localDateOf } from '../db/repo.ts'
@@ -58,15 +60,50 @@ export function SessionExercisePicker({
   )
 }
 
+/**
+ * The same picker, wired to a template instead of a workout.
+ *
+ * Twenty lines, because the list itself knows nothing about either. The write
+ * is the only difference, which is the whole reason the list was split out
+ * before there was a second caller for it.
+ */
+export function TemplateExercisePicker({
+  templateId,
+  replacing,
+}: {
+  templateId: number
+  replacing?: number
+}) {
+  const { data: planned } = useTemplateExercises(templateId)
+  const { add, replace } = useEditTemplatePlan(templateId)
+  const back = useNav((s) => s.back)
+
+  return (
+    <ExercisePicker
+      excludeIds={(planned ?? []).map((p) => p.exerciseId)}
+      onPick={async (exerciseId) => {
+        if (replacing != null) {
+          await replace.mutateAsync({ exerciseId: replacing, withExerciseId: exerciseId })
+        } else {
+          await add.mutateAsync({ exerciseId })
+        }
+        back()
+      }}
+    />
+  )
+}
+
 interface Props {
   /** Already in the workout: shown, but not addable twice. */
   excludeIds?: number[]
+  /** How many rows to fetch. The library raises it; the picker keeps 50. */
+  limit?: number
   onPick: (exerciseId: number) => void
 }
 
-export function ExercisePicker({ excludeIds = [], onPick }: Props) {
+export function ExercisePicker({ excludeIds = [], limit, onPick }: Props) {
   const [term, setTerm] = useState('')
-  const { data: results, isLoading } = useExerciseSearch(term)
+  const { data: results, isLoading } = useExerciseSearch(term, limit)
   const today = localDateOf()
 
   return (

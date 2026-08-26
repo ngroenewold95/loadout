@@ -25,6 +25,7 @@
 import type { PerformedSet } from '../db/repo.ts'
 import { relativeDay } from '../logic/dates.ts'
 import type { Unit } from '../logic/units.ts'
+import { describeSet } from './setText.ts'
 
 interface Props {
   localDate: string
@@ -34,12 +35,17 @@ interface Props {
   unit: Unit
   /**
    * Slot index the entry bar is aiming at, or null when it is aiming at
-   * nothing. The row at this index is the one lit.
+   * nothing. The row at this index is the one lit. Absent where there is no
+   * set being aimed at, which is every screen outside a live workout.
    */
-  activeIndex: number | null
-  describe: (set: PerformedSet, unit: Unit) => string
-  /** Load this set's numbers into the entry bar. Logs nothing. */
-  onPick: (set: PerformedSet) => void
+  activeIndex?: number | null
+  /**
+   * Load this set's numbers into the entry bar. Logs nothing.
+   *
+   * Optional, and its absence is what makes the card read-only: the exercise
+   * detail screen shows the same history with nothing to load it into.
+   */
+  onPick?: (set: PerformedSet) => void
 }
 
 export function HistoryCard({
@@ -47,8 +53,7 @@ export function HistoryCard({
   today,
   sets,
   unit,
-  activeIndex,
-  describe,
+  activeIndex = null,
   onPick,
 }: Props) {
   return (
@@ -61,14 +66,18 @@ export function HistoryCard({
       <div className="mt-2 flex flex-col gap-1">
         {sets.map((set, i) => {
           const lit = i === activeIndex
+          // A button only where there is somewhere to send the numbers. A
+          // tappable row that does nothing is worse than a plain one.
+          const Row = onPick ? 'button' : 'div'
           return (
-            <button
+            <Row
               key={set.id}
-              type="button"
+              {...(onPick ? { type: 'button' as const, onClick: () => onPick(set) } : {})}
               // Full width, so the target is the row rather than the text on it.
               // These are read under a bar, one-handed.
-              onClick={() => onPick(set)}
-              className="active:bg-surface-3 -mx-1 flex items-center gap-3 rounded-lg px-1 py-1 text-left text-sm"
+              className={`-mx-1 flex items-center gap-3 rounded-lg px-1 py-1 text-left text-sm ${
+                onPick ? 'active:bg-surface-3' : ''
+              }`}
             >
               <span
                 className={`flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
@@ -78,9 +87,9 @@ export function HistoryCard({
                 {i + 1}
               </span>
               <span className={`tabular-nums ${lit ? 'text-text' : 'text-text-dim'}`}>
-                {describe(set, unit)}
+                {describeSet(set, unit)}
               </span>
-            </button>
+            </Row>
           )
         })}
       </div>
