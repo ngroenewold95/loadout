@@ -2,8 +2,8 @@
 
 Personal Android workout logger. Single user, offline-first, no server.
 
-Replaces Progression, importing ~5 years of history (6,140 sets, 339 sessions,
-2021-07-06 → 2026-07-22).
+Replaces Progression, importing ~5 years of history (6,206 sets, 343 sessions,
+2021-07-06 to 2026-08-13).
 
 ## Stack
 

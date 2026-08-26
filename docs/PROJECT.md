@@ -1020,9 +1020,9 @@ would have multiplied every duration by the number of sets in it.
 
 ## How load is made up - `loading`, bar weight, plates
 
-Schema and solver exist and are tested; **nothing renders them yet** (stage 14,
-renumbered from 7 when the stages were resequenced on 2026-08-13). The design is
-here because it is the part a cold start would otherwise re-derive wrongly.
+**Built and rendering, as of stage 14** - see "Plate chips" below for what was
+measured on the phone. This section is the design; it stays because it is the
+part a cold start would otherwise re-derive wrongly.
 
 ### `loading` is a separate axis from `modality`
 
@@ -1090,10 +1090,12 @@ kg drifts exactly as `units.ts` warns: a 170 lb bar came out one 2.5 lb plate
 short because the running total landed 0.0001 kg under the plate it needed. A
 plate is a display-unit object anyway - a 45 is 45 lb, not 20.4117 kg.
 
-**Open:** the 730 lb machine press in the history needs 7x45 per side, which the
-configured inventory of 8 cannot reach. It correctly reports a shortfall, but a
-commercial gym effectively has unlimited plates. Decide whether inventory is
-per-gym, or whether an unset count means unlimited.
+~~**Open:** the 730 lb machine press in the history needs 7x45 per side, which
+the configured inventory of 8 cannot reach.~~ **Settled in stage 14**: the
+denominations are the measured ones and the counts are seeded at 20 of each, so
+a commercial gym is effectively unlimited while a genuinely unreachable weight
+still reports a shortfall. Per-gym inventory is the follow-up if a home rack
+ever becomes the constraint.
 
 ---
 
@@ -1119,6 +1121,14 @@ daemon, the phone came back on its own as
 and the recorded port 37747 had in fact gone stale and was refused. So try
 `adb devices -l` first and only go looking for a port if nothing appears.
 Wireless debugging must still be switched on at the phone.
+
+**Amended 2026-08-25: `offline` beside that mDNS name means re-pair, not
+retry.** The entry appeared with `offline` through a daemon restart and an
+explicit `adb connect`, and the pairing had simply lapsed. `adb pair
+<ip>:<pairing-port> <code>` from the phone's own pairing dialog, then `adb
+connect <ip>:<connect-port>` with the port off the main screen, and it came
+straight back. Both ports change every time, so both have to be read off the
+phone; nothing about them is worth writing down here.
 
 ### Putting the imported history on the phone
 
@@ -1148,8 +1158,8 @@ hour and this paragraph replaced two that had.
 **This inverts at cutover.** Once the real logging starts, the device holds the
 only copy of everything logged natively, and `npm run import` already refuses to
 run the moment any `sets.source = 'native'` row exists. Cutover is one-way. The
-synced-folder export in stage 16 is what has to exist before that line is
-crossed.
+synced-folder export exists now, so that condition is met; what remains is
+picking the folder on the phone and running the procedure below.
 
 Reset with the push above. Verify by opening the app: Home with no in-progress
 session, both templates showing `not done yet`.
@@ -2160,8 +2170,9 @@ the next - screenshot before every tap.
   Still to decide with a thumb: whether the ±2.5 row is missed in a gym.
 - Only `load_mode` is needed at import, and only for 4 exercises - a five-minute
   file. `modality`, `primary_muscle`, `loading` stay nullable and get filled in
-  lazily. `primary_muscle` is now 83 of 87; `modality` and `loading` are still
-  empty, and **stage 14** needs `loading`.
+  lazily. `primary_muscle` is 83 of 87, and stage 14 filled `modality` and
+  `loading` for 57 exercises - every one that a logged set or the exercise's own
+  name proves. The rest stay null and render no chips, deliberately.
 - Vitest for tests; `db/*` and `Examples/` gitignored
 - App id `com.groenewold.loadout` - baked in at `cap init`; changing it orphans
   the on-device database
@@ -2222,7 +2233,8 @@ the next - screenshot before every tap.
   anything. The device half was missing until 2026-08-09; an older version of
   this document claimed the plugin's `addUpgradeStatement` covered it, which was
   never true once we took over migrations. Neither survives uninstall - that is
-  the separate synced-folder export, still open.
+  the synced-folder export, **built and proved against an uninstall in stage
+  16**.
 - The device database must never be committed or packaged as an Android asset.
   `sets.notes` carries the medical notes from `Set Comment`, and `android/` is
   tracked. It stays in gitignored `db/` and reaches the phone over `adb`.
