@@ -27,18 +27,20 @@
 import { useCallback, useState } from 'react'
 import {
   useEditSessionPlan,
+  useEditTemplatePlan,
   useSessionExercises,
   useSessionSets,
   useStartSession,
   useTemplateExercises,
   useTemplates,
 } from '../state/queries.ts'
-import type { SessionRow, TemplateExerciseRow } from '../db/repo.ts'
+import type { ExercisePlanPatch, SessionRow, TemplateExerciseRow } from '../db/repo.ts'
 import { formatDuration, formatTarget } from '../logic/entry.ts'
 import { useNav } from '../state/nav.ts'
 import { useWorkout } from '../state/workout.ts'
 import { GroupRail, GroupWord } from './GroupTag.tsx'
 import { ActionItem, ActionSheet } from './ActionSheet.tsx'
+import { ExercisePlanEditor } from './ExercisePlanEditor.tsx'
 
 /** A live workout: tappable cards, plan edits, and the way out. */
 export function WorkoutOverview({ session }: { session: SessionRow }) {
@@ -86,16 +88,25 @@ export function WorkoutOverview({ session }: { session: SessionRow }) {
       countFor={(row) => (sets ?? []).filter((s) => s.exerciseId === row.exerciseId).length}
       onOpen={(index) => push({ kind: 'exercise', sessionId: session.id, index })}
       onReplace={(exerciseId) =>
-        push({ kind: 'picker', sessionId: session.id, replacing: exerciseId })
+        push({ kind: 'picker', target: { session: session.id }, replacing: exerciseId })
       }
       onRemove={handleRemove}
       onMove={handleMove}
+      // The same editor the template uses, writing to the session's own copy.
+      // Editing a workout in progress must never rewrite the programme, which
+      // is what `session_exercises` exists for.
+      onSavePlan={(exerciseId, patch) => plan.setPlan.mutateAsync({ exerciseId, patch })}
+      // Never below the sets already performed: those are facts, and the
+      // header would otherwise read `3/2`.
+      minSetsFor={(row) =>
+        (sets ?? []).filter((s) => s.exerciseId === row.exerciseId).length || 1
+      }
       busy={busy}
       actions={
         <>
           <button
             className="bg-surface-1 active:bg-surface-3 flex-1 rounded-2xl py-4 font-medium"
-            onClick={() => push({ kind: 'picker', sessionId: session.id })}
+            onClick={() => push({ kind: 'picker', target: { session: session.id } })}
           >
             Add exercise
           </button>
@@ -127,6 +138,7 @@ export function TemplatePreview({ templateId }: { templateId: number }) {
   const { data: templates } = useTemplates()
   const startSession = useStartSession()
   const reset = useNav((s) => s.reset)
+  const push = useNav((s) => s.push)
 
   // `sessions.name` is a copy taken at start, not a foreign key, so a template
   // renamed later leaves old workouts reading as they were performed.
@@ -146,13 +158,97 @@ export function TemplatePreview({ templateId }: { templateId: number }) {
       busy={startSession.isPending}
       error={startSession.error as Error | null}
       actions={
-        <button
-          className="bg-primary text-on-primary flex-1 rounded-2xl py-4 text-lg font-semibold disabled:opacity-40"
-          disabled={startSession.isPending}
-          onClick={start}
-        >
-          Start workout
-        </button>
+        <>
+          {/* Editing is a different errand from training, so it is its own
+              screen rather than a mode on this one. This stays the thing you
+              commit to. */}
+          <button
+            className="bg-surface-1 active:bg-surface-3 rounded-2xl px-5 py-4 font-medium"
+            onClick={() => push({ kind: 'templateEdit', templateId })}
+          >
+            Edit
+          </button>
+          <button
+            className="bg-primary text-on-primary flex-1 rounded-2xl py-4 text-lg font-semibold disabled:opacity-40"
+            disabled={startSession.isPending}
+            onClick={start}
+          >
+            Start workout
+          </button>
+        </>
+      }
+    />
+  )
+}
+
+/**
+ * The programme itself, editable.
+ *
+ * A third caller of the same `Layout`, which is the point: what a workout looks
+ * like while it is being planned and while it is being performed is the same
+ * list, and the editor over each row is the same sheet. `PROJECT.md` records
+ * the reference app doing exactly this and names it as what stops the two
+ * drifting apart.
+ *
+ * **Every write here is a soft delete or an UPDATE, and `plan.ts` is never
+ * re-read at runtime.** A seeder that replaced templates on launch would undo
+ * all of this silently; `db/seed.ts` says so in its header and does not call
+ * `seedPlanTemplates`.
+ */
+export function TemplateEditor({ templateId }: { templateId: number }) {
+  const { data: planned } = useTemplateExercises(templateId)
+  const { data: templates } = useTemplates()
+  const plan = useEditTemplatePlan(templateId)
+  const push = useNav((s) => s.push)
+  const back = useNav((s) => s.back)
+
+  const name = templates?.find((t) => t.id === templateId)?.name ?? null
+  const busy =
+    plan.remove.isPending ||
+    plan.replace.isPending ||
+    plan.reorder.isPending ||
+    plan.setPlan.isPending
+
+  const handleMove = async (exerciseId: number, by: -1 | 1) => {
+    if (!planned) return
+    const ids = planned.map((p) => p.exerciseId)
+    const from = ids.indexOf(exerciseId)
+    const to = from + by
+    if (from < 0 || to < 0 || to >= ids.length) return
+
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    await plan.reorder.mutateAsync({ exerciseIds: ids })
+  }
+
+  return (
+    <Layout
+      rows={planned}
+      heading={name}
+      onReplace={(exerciseId) =>
+        push({ kind: 'picker', target: { template: templateId }, replacing: exerciseId })
+      }
+      onRemove={(exerciseId) => plan.remove.mutateAsync({ exerciseId })}
+      onMove={handleMove}
+      onSavePlan={(exerciseId, patch) => plan.setPlan.mutateAsync({ exerciseId, patch })}
+      busy={busy}
+      error={(plan.setPlan.error ?? plan.add.error) as Error | null}
+      actions={
+        <>
+          <button
+            className="bg-surface-1 active:bg-surface-3 flex-1 rounded-2xl py-4 font-medium"
+            onClick={() => push({ kind: 'picker', target: { template: templateId } })}
+          >
+            Add exercise
+          </button>
+          {/* Nothing to save: every edit was written when it was made. This is
+              only the way back to the preview. */}
+          <button
+            className="bg-primary text-on-primary flex-1 rounded-2xl py-4 font-semibold"
+            onClick={() => back()}
+          >
+            Done
+          </button>
+        </>
       }
     />
   )
@@ -173,6 +269,8 @@ function Layout({
   onReplace,
   onRemove,
   onMove,
+  onSavePlan,
+  minSetsFor,
   busy = false,
   error,
   actions,
@@ -186,6 +284,10 @@ function Layout({
   onReplace?: (exerciseId: number) => void
   onRemove?: (exerciseId: number) => void
   onMove?: (exerciseId: number, by: -1 | 1) => void
+  /** Write sets, rep range and rest. Absent leaves the list read-only. */
+  onSavePlan?: (exerciseId: number, patch: ExercisePlanPatch) => Promise<void> | void
+  /** Lowest the set count may go, per row. A session clamps at sets performed. */
+  minSetsFor?: (row: TemplateExerciseRow) => number
   busy?: boolean
   error?: Error | null
   actions: React.ReactNode
@@ -198,8 +300,11 @@ function Layout({
    * sheet would silently retarget under the thumb.
    */
   const [menuFor, setMenuFor] = useState<number | null>(null)
+  const push = useNav((s) => s.push)
   /** Remove confirms with a second tap on the same row - see `ActionSheet`. */
   const [confirmRemove, setConfirmRemove] = useState(false)
+  /** Which exercise's sets, reps and rest are being edited, by id. */
+  const [editingPlan, setEditingPlan] = useState<number | null>(null)
 
   const closeMenu = useCallback(() => {
     setMenuFor(null)
@@ -210,7 +315,7 @@ function Layout({
 
   const open = rows.find((r) => r.exerciseId === menuFor) ?? null
   const openIndex = open ? rows.indexOf(open) : -1
-  const editable = Boolean(onReplace || onRemove || onMove)
+  const editing = rows.find((r) => r.exerciseId === editingPlan) ?? null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -224,7 +329,10 @@ function Layout({
               row={row}
               done={countFor?.(row) ?? null}
               onOpen={onOpen && (() => onOpen(index))}
-              onMenu={editable ? () => setMenuFor(row.exerciseId) : undefined}
+              // Always, even on the read-only template preview: the menu now
+              // carries `About this exercise`, which is worth having wherever
+              // an exercise is listed and is the way to read it under a bar.
+              onMenu={() => setMenuFor(row.exerciseId)}
               busy={busy}
             />
           ))}
@@ -243,6 +351,13 @@ function Layout({
 
       {open && (
         <ActionSheet title={open.name} onClose={closeMenu}>
+          <ActionItem
+            label="About this exercise"
+            onClick={() => {
+              push({ kind: 'exerciseInfo', exerciseId: open.exerciseId })
+              closeMenu()
+            }}
+          />
           {onMove && (
             <>
               <ActionItem
@@ -262,6 +377,16 @@ function Layout({
                 }}
               />
             </>
+          )}
+          {onSavePlan && (
+            <ActionItem
+              label="Sets, reps and rest"
+              disabled={busy}
+              onClick={() => {
+                setEditingPlan(open.exerciseId)
+                closeMenu()
+              }}
+            />
           )}
           {onReplace && (
             <ActionItem
@@ -289,6 +414,19 @@ function Layout({
             />
           )}
         </ActionSheet>
+      )}
+
+      {editing && onSavePlan && (
+        <ExercisePlanEditor
+          row={editing}
+          minSets={minSetsFor?.(editing) ?? 1}
+          busy={busy}
+          onClose={() => setEditingPlan(null)}
+          onSave={async (patch) => {
+            await onSavePlan(editing.exerciseId, patch)
+            setEditingPlan(null)
+          }}
+        />
       )}
     </div>
   )
