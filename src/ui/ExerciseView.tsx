@@ -47,6 +47,8 @@ import {
   useSessionSets,
   useSetPlannedSets,
   useUpdateSet,
+  usePlateInventory,
+  useSettings,
 } from '../state/queries.ts'
 import {
   localDateOf,
@@ -66,17 +68,19 @@ import {
   stepDuration,
   stepReps,
   stepWeight,
-  WEIGHT_STEPS,
+  stepForExercise,
 } from '../logic/entry.ts'
 import { shouldIncreaseLoad } from '../logic/plan.ts'
 import { isComplete, nextIncompleteIndex } from '../logic/session.ts'
 import { setSlots, type SetSlot } from '../logic/slots.ts'
 import { useNav } from '../state/nav.ts'
 import { useEntryDraft, useExerciseIndex, useWorkout } from '../state/workout.ts'
-import { formatWeight, weightsEqual, type Unit } from '../logic/units.ts'
+import { DEFAULT_UNIT, formatWeight, weightsEqual, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
 import { EntryField } from './EntryField.tsx'
 import { HistoryCard } from './HistoryCard.tsx'
+import { PlateChips } from './PlateChips.tsx'
+import { describeSet } from './setText.ts'
 import { GroupRail, GroupWord } from './GroupTag.tsx'
 
 interface Props {
@@ -102,16 +106,6 @@ function bothNullOr(
   return equal(a, b)
 }
 
-/** Render a set the way it was performed, whatever shape it is. */
-function describeSet(set: PerformedSet, unit: Unit): string {
-  const parts: string[] = []
-  if (set.weightKg != null) parts.push(`${formatWeight(set.weightKg, unit)}`)
-  if (set.reps != null) parts.push(parts.length > 0 ? `× ${set.reps}` : `${set.reps} reps`)
-  if (set.durationS != null) parts.push(formatDuration(set.durationS))
-  if (set.distanceM != null) parts.push(`${set.distanceM} m`)
-  return parts.join(' ')
-}
-
 export function ExerciseView({ session, openAt }: Props) {
   const push = useNav((s) => s.push)
   const openSummary = () => push({ kind: 'summary', sessionId: session.id })
@@ -120,6 +114,8 @@ export function ExerciseView({ session, openAt }: Props) {
   // in progress must not rewrite the programme. See `session_exercises`.
   const { data: planned } = useSessionExercises(session.id)
   const { data: sets } = useSessionSets(session.id)
+  const { data: plates } = usePlateInventory()
+  const { data: settings } = useSettings()
   const exerciseIds = useMemo(() => (planned ?? []).map((p) => p.exerciseId), [planned])
   const { data: history } = useRecentPerformance(exerciseIds, session.id)
 
@@ -158,7 +154,10 @@ export function ExerciseView({ session, openAt }: Props) {
 
   const current = planned?.[index]
   const shape = current ? entryShape(current.trackingType) : null
-  const unit: Unit = current?.preferredUnit ?? 'lb'
+  const unit: Unit = current?.preferredUnit ?? DEFAULT_UNIT
+  // Exercise override, then the gym setting, then the constant the app used
+  // before either column had a reader.
+  const weightStep = stepForExercise(current?.incrementKg, settings?.weightIncrementKg, unit)
 
   const doneHere = useMemo(
     () => (sets ?? []).filter((s) => s.exerciseId === current?.exerciseId),
@@ -425,7 +424,14 @@ export function ExerciseView({ session, openAt }: Props) {
     clearDraft()
     // Rest starts as a consequence of logging, never as its own tap.
     if (current.restS) {
-      startRestTimer(await startRest(current.restS), current.restS * 1000)
+      startRestTimer(
+        await startRest(current.restS, {
+          overlay: settings?.overlayInBackground ?? true,
+          vibrate: settings?.restVibrate ?? true,
+          sound: settings?.restSound ?? false,
+        }),
+        current.restS * 1000,
+      )
     }
 
     /**
@@ -566,13 +572,26 @@ export function ExerciseView({ session, openAt }: Props) {
               for 8". Each field carries its own stacked handles, so the row
               needs nothing but a gap. A shape with only one field just gets a
               full-width version of the same component. */}
+          {/* Above the fields, so the bar grows upward and LOG SET does not
+              move. Renders nothing at all unless the exercise is plate-loaded,
+              which is most of them. */}
+          {shape.weight !== 'none' && (
+            <PlateChips
+              weightKg={weightKg}
+              baseKg={current?.baseWeightKg ?? null}
+              loading={current?.loading}
+              inventory={plates}
+              unit={unit}
+            />
+          )}
+
           <div className="flex items-stretch gap-3">
             {shape.weight !== 'none' && (
               <EntryField
                 display={weightKg == null ? '' : formatWeight(weightKg, unit)}
                 unit={unit}
-                stepLabel={String(WEIGHT_STEPS[unit][0])}
-                onStep={(steps) => stepWeightBy(steps * WEIGHT_STEPS[unit][0])}
+                stepLabel={String(weightStep)}
+                onStep={(steps) => stepWeightBy(steps * weightStep)}
                 parse={(text) => parseWeight(text, unit)}
                 onParsed={(kg) => patchDraft({ weightKg: kg })}
               />
@@ -772,7 +791,6 @@ function ExercisePage({
               sets={past.sets}
               unit={unit}
               activeIndex={activeIndex}
-              describe={describeSet}
               onPick={onPickHistory}
             />
           ))
