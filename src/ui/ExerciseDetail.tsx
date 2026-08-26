@@ -40,7 +40,7 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
   const best = assisted ? stats?.leastAssistKg : stats?.bestWeightKg
 
   return (
-    <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto px-5 pt-1 pb-6">
+    <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto px-5 pt-1">
       <div className="flex items-stretch gap-3">
         <GroupRail primaryMuscle={exercise.primaryMuscle} />
         <div className="min-w-0 flex-1">
@@ -125,6 +125,10 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
           </button>
         )}
       </section>
+
+      {/* Clears the gesture bar. A `pb-6` on the container would
+          overwrite `pb-safe-b`, since both set padding-bottom. */}
+      <div className="pb-6" />
     </div>
   )
 }

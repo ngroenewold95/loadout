@@ -39,7 +39,7 @@ export function Settings() {
     : WEIGHT_STEPS[unit][0]
 
   return (
-    <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto px-5 pt-1 pb-6">
+    <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto px-5 pt-1">
       <section>
         <h3 className="text-text-dim text-xs tracking-wide uppercase">Entry</h3>
         <div className="bg-surface-1 mt-2 rounded-xl px-4 py-3">
@@ -149,6 +149,10 @@ export function Settings() {
           </div>
         </div>
       </section>
+
+      {/* Clears the gesture bar. A `pb-6` on the container would
+          overwrite `pb-safe-b`, since both set padding-bottom. */}
+      <div className="pb-6" />
     </div>
   )
 }
