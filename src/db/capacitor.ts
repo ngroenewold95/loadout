@@ -87,11 +87,21 @@ function core(conn: SQLiteDBConnection, sqlite: SQLiteConnection): DbCore {
       return result
     },
 
-    /** One bridge crossing for N statements - see the rule in driver.ts. */
+    /**
+     * One bridge crossing for N statements - see the rule in driver.ts.
+     *
+     * The transaction flag follows OUR depth, which is the same rule `exec`
+     * states above: inside a transaction the plugin must not open a second one.
+     * `executeSet(..., true)` calls `beginTransaction` itself, and on device
+     * that fails outright with "Failed in beginTransaction Already in
+     * transaction" - measured, not theorised: it took down every launch seeder
+     * on the first run against the phone. Outside a transaction the flag stays
+     * on, so a bare batch is still atomic on its own.
+     */
     batch: async (statements: Statement[]) => {
       await conn.executeSet(
         statements.map((s) => ({ statement: s.sql, values: s.params ?? [] })),
-        true,
+        open === 0,
       )
       await persist()
     },
