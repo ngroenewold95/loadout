@@ -22,6 +22,7 @@ import { applyMigrations } from '../src/db/migrations.ts'
 import { openNodeDb } from '../src/db/node.ts'
 import { seedPlanTemplates } from '../src/db/seedPlan.ts'
 import { seedExerciseMuscles } from '../src/db/seedMuscles.ts'
+import { seedExerciseGuidance } from '../src/db/seedExerciseGuidance.ts'
 
 /**
  * The newest export in `Examples/`, unless one is named explicitly.
@@ -245,6 +246,11 @@ if (seeded.createdExercises.length > 0) {
 
 const muscles = await seedExerciseMuscles(handle)
 console.log(`  muscle groups on ${muscles.withGroup} exercise(s)`)
+
+// Authored cues, so a freshly built `db/for-device.sqlite` arrives populated
+// rather than waiting for the launch seeder to fill it in on the phone.
+const guidance = await seedExerciseGuidance(handle)
+console.log(`  guidance on ${guidance.withGuidance} exercise(s)`)
 if (muscles.unmapped.length > 0) {
   // Not fatal: an unmapped exercise renders the neutral `?` circle. Reported
   // so a rename surfaces here rather than as a mystery grey badge on the phone.
