@@ -16,9 +16,9 @@ import { useNav } from '../state/nav.ts'
 import { localDateOf, type SessionHistoryRow } from '../db/repo.ts'
 import { relativeDay } from '../logic/dates.ts'
 import { formatDuration } from '../logic/entry.ts'
-import { formatWeight, type Unit } from '../logic/units.ts'
+import { formatWeight, DEFAULT_UNIT } from '../logic/units.ts'
 
-const UNIT: Unit = 'lb'
+const UNIT = DEFAULT_UNIT
 
 /** How many Home shows, and how many each `Load more` adds. */
 const RECENT = 5

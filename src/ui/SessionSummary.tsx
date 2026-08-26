@@ -24,7 +24,7 @@ import { formatDuration } from '../logic/entry.ts'
 import { relativeDay } from '../logic/dates.ts'
 import { sessionTotals } from '../logic/session.ts'
 import { localDateOf } from '../db/repo.ts'
-import { formatWeight, type Unit } from '../logic/units.ts'
+import { formatWeight, DEFAULT_UNIT } from '../logic/units.ts'
 import { GroupRail } from './GroupTag.tsx'
 import { Stat } from './Stat.tsx'
 
@@ -54,7 +54,7 @@ export function SessionSummary({ sessionId }: Props) {
     return <p className="text-text-dim px-5 py-8">Loading session…</p>
   }
 
-  const unit: Unit = 'lb'
+  const unit = DEFAULT_UNIT
   const totals = sessionTotals(sets ?? [])
   const finished = session.endedAtUtc != null
   const busy = endSession.isPending || discardSession.isPending

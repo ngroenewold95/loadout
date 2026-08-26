@@ -15,10 +15,10 @@ import { useHistoryStats, useReadyToAddLoad, useSetsByMuscle } from '../state/qu
 import { localDateOf } from '../db/repo.ts'
 import { relativeDay } from '../logic/dates.ts'
 import { muscleMark } from '../logic/muscles.ts'
-import { compactWeight, type Unit } from '../logic/units.ts'
+import { compactWeight, DEFAULT_UNIT } from '../logic/units.ts'
 import { GroupWord } from './GroupTag.tsx'
 
-const UNIT: Unit = 'lb'
+const UNIT = DEFAULT_UNIT
 
 export function HomeStats() {
   return (

@@ -31,10 +31,17 @@ public class RestTimerPlugin extends Plugin {
         }
         long totalMs = call.getLong("totalMs", Math.max(1, endsAt - System.currentTimeMillis()));
 
+        // The gym settings ride in with the rest that is starting. The service
+        // cannot read the database - that lives in the WebView's process, which
+        // is exactly what it has to outlive - so a toggle applies from the next
+        // rest rather than the running one.
         Intent i = new Intent(getContext(), RestTimerService.class)
             .setAction(RestTimerService.ACTION_START)
             .putExtra(RestTimerService.EXTRA_ENDS_AT, endsAt.longValue())
-            .putExtra(RestTimerService.EXTRA_TOTAL_MS, totalMs);
+            .putExtra(RestTimerService.EXTRA_TOTAL_MS, totalMs)
+            .putExtra(RestTimerService.EXTRA_OVERLAY, Boolean.TRUE.equals(call.getBoolean("overlay", true)))
+            .putExtra(RestTimerService.EXTRA_VIBRATE, Boolean.TRUE.equals(call.getBoolean("vibrate", true)))
+            .putExtra(RestTimerService.EXTRA_SOUND, Boolean.TRUE.equals(call.getBoolean("sound", false)));
         getContext().startForegroundService(i);
 
         JSObject result = new JSObject();

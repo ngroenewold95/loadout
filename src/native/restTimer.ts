@@ -7,8 +7,18 @@
  */
 import { registerPlugin } from '@capacitor/core'
 
+/** The gym settings a rest needs. See `RestTimerService` for why they travel. */
+export interface RestOptions {
+  /** Show the floating bubble once the app is in the background. */
+  overlay?: boolean
+  /** The five-second haptic countdown and the buzz at zero. */
+  vibrate?: boolean
+  /** A tone at zero, on the alarm stream. */
+  sound?: boolean
+}
+
 export interface RestTimerPlugin {
-  start(opts: { endsAt: number; totalMs: number }): Promise<{ overlay: boolean }>
+  start(opts: { endsAt: number; totalMs: number } & RestOptions): Promise<{ overlay: boolean }>
   extend(opts: { ms: number }): Promise<void>
   cancel(): Promise<void>
   /** The service's own view of the countdown. `endsAt` is 0 when idle. */
@@ -26,9 +36,12 @@ export const RestTimer = registerPlugin<RestTimerPlugin>('RestTimer')
  * overlay both render from, and it is the only form that survives process
  * death intact.
  */
-export async function startRest(seconds: number): Promise<number> {
+export async function startRest(seconds: number, options: RestOptions = {}): Promise<number> {
   const endsAt = Date.now() + seconds * 1000
-  await RestTimer.start({ endsAt, totalMs: seconds * 1000 })
+  // The settings are pushed in with the rest rather than read by the service,
+  // which cannot reach the database. A toggle therefore applies from the next
+  // rest, not the one already running.
+  await RestTimer.start({ endsAt, totalMs: seconds * 1000, ...options })
   return endsAt
 }
 

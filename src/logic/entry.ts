@@ -49,6 +49,30 @@ export const WEIGHT_STEPS: Record<Unit, readonly [number, number]> = {
 }
 
 /**
+ * How big one tap on the weight handle is, in the display unit.
+ *
+ * Most specific first, the same shape as the base-weight chain:
+ *
+ * 1. the exercise's own `default_increment_kg` - a stack that moves in 10s or
+ *    15s is not a 5 lb lift, and the scrub is only as good as its step
+ * 2. the global setting, which is `Increment (Weight)` in the gym settings
+ * 3. `WEIGHT_STEPS`, which is what the app used before either column had a
+ *    reader and is what a database with no settings row still gets
+ *
+ * Returned in the display unit because that is what the step button is labelled
+ * with and what `stepWeight` takes.
+ */
+export function stepForExercise(
+  exerciseIncrementKg: number | null | undefined,
+  settingsIncrementKg: number | null | undefined,
+  unit: Unit,
+): number {
+  const kg = exerciseIncrementKg ?? settingsIncrementKg
+  if (kg == null || kg <= 0) return WEIGHT_STEPS[unit][0]
+  return roundForDisplay(fromKg(kg, unit), unit)
+}
+
+/**
  * Move a stored kg weight by a step expressed in the DISPLAY unit.
  *
  * Round-trips through the display unit deliberately: the user thinks in pounds,

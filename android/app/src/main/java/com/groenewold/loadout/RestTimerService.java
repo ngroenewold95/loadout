@@ -16,6 +16,8 @@ import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.WindowManager;
@@ -43,6 +45,10 @@ public class RestTimerService extends Service {
     public static final String EXTRA_ENDS_AT = "endsAt";
     public static final String EXTRA_TOTAL_MS = "totalMs";
     public static final String EXTRA_EXTEND_MS = "extendMs";
+    /** Gym settings, pushed in at start rather than read from the database. */
+    public static final String EXTRA_OVERLAY = "overlay";
+    public static final String EXTRA_VIBRATE = "vibrate";
+    public static final String EXTRA_SOUND = "sound";
 
     private static final String CHANNEL_ID = "rest_timer_v2";
     private static final int NOTIFICATION_ID = 1;
@@ -64,6 +70,19 @@ public class RestTimerService extends Service {
     private long endsAt;
     private long totalMs;
     private boolean vibrationFired;
+
+    /**
+     * The gym settings, as of the rest that is running.
+     *
+     * They arrive as intent extras on ACTION_START rather than being read from
+     * SQLite here: the database lives in the WebView's process space and this
+     * service has to keep counting when that process is gone. The consequence,
+     * which is the honest one to state: toggling a setting mid-rest applies
+     * from the NEXT rest, not this one.
+     */
+    private boolean overlayEnabled = true;
+    private boolean vibrateEnabled = true;
+    private boolean soundEnabled = false;
 
     /**
      * The running timer, readable without binding to the service.
@@ -100,7 +119,8 @@ public class RestTimerService extends Service {
         @Override
         public void run() {
             vibrationFired = true;
-            playCountdownVibration();
+            if (vibrateEnabled) playCountdownVibration();
+            if (soundEnabled) scheduleAlarmTone();
         }
     };
 
@@ -114,6 +134,7 @@ public class RestTimerService extends Service {
      */
     private void scheduleVibration() {
         handler.removeCallbacks(fireVibration);
+        if (!vibrateEnabled && !soundEnabled) return;
         long untilLeadIn = endsAt - LEAD_IN_MS - System.currentTimeMillis();
         if (untilLeadIn <= 0) {
             // Already inside the final five seconds - the waveform's own
@@ -163,6 +184,9 @@ public class RestTimerService extends Service {
         if (intent != null && intent.hasExtra(EXTRA_ENDS_AT)) {
             endsAt = intent.getLongExtra(EXTRA_ENDS_AT, System.currentTimeMillis());
             totalMs = intent.getLongExtra(EXTRA_TOTAL_MS, 1);
+            overlayEnabled = intent.getBooleanExtra(EXTRA_OVERLAY, true);
+            vibrateEnabled = intent.getBooleanExtra(EXTRA_VIBRATE, true);
+            soundEnabled = intent.getBooleanExtra(EXTRA_SOUND, false);
             publishState();
             scheduleVibration();
         }
@@ -179,6 +203,9 @@ public class RestTimerService extends Service {
     private void showOverlay() {
         // Suppressed while the app is in front; the in-app header shows it.
         if (MainActivity.isForeground) return;
+        // Turned off in settings. The notification still counts, so the rest is
+        // not lost - only the bubble is.
+        if (!overlayEnabled) return;
         if (overlay != null) {
             overlay.setTimer(endsAt, totalMs);
             return;
@@ -283,6 +310,44 @@ public class RestTimerService extends Service {
         }
     }
 
+    // ----------------------------------------------------------------- sound
+
+    /**
+     * A tone at zero, on the alarm stream.
+     *
+     * Off by default, and separate from the haptics on purpose: the waveform is
+     * one wake-up covering the whole five-second lead-in, whereas a tone is
+     * only wanted at the end. `ToneGenerator` rather than a bundled asset
+     * because there is nothing to ship and nothing to keep in sync.
+     *
+     * The notification stays silent either way - the channel is created with no
+     * sound and no vibration. This belongs to the service, not to the channel.
+     */
+    private void scheduleAlarmTone() {
+        long untilZero = Math.max(0, endsAt - System.currentTimeMillis());
+        handler.removeCallbacks(fireTone);
+        handler.postDelayed(fireTone, untilZero);
+    }
+
+    private final Runnable fireTone = new Runnable() {
+        @Override
+        public void run() {
+            ToneGenerator tones = null;
+            try {
+                tones = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
+                tones.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 900);
+            } catch (RuntimeException ignored) {
+                // Some devices refuse a second generator while one is playing.
+                // A missed beep is not worth taking the timer down for.
+            } finally {
+                if (tones != null) {
+                    final ToneGenerator done = tones;
+                    handler.postDelayed(done::release, 1200);
+                }
+            }
+        }
+    };
+
     // ----------------------------------------------------------- notification
 
     private void startForegroundNotification() {
@@ -345,6 +410,9 @@ public class RestTimerService extends Service {
     /** Skip during the final five seconds must silence the buzz immediately. */
     private void cancelVibration() {
         handler.removeCallbacks(fireVibration);
+        // The tone is armed for zero, so a skipped or shortened rest has to
+        // cancel it too or it fires for a rest that is already over.
+        handler.removeCallbacks(fireTone);
         Vibrator v = vibrator();
         if (v != null) v.cancel();
     }

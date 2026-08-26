@@ -13,6 +13,7 @@ import {
   stepReps,
   stepWeight,
   WEIGHT_STEPS,
+  stepForExercise,
 } from './entry.ts'
 import { formatWeight, toKg, weightsEqual } from './units.ts'
 
@@ -189,5 +190,22 @@ describe('formatRepTarget', () => {
     expect(formatRepTarget(null, null)).toBeNull()
     // A max alone says nothing without its floor, so it is not a target.
     expect(formatRepTarget(null, 8)).toBeNull()
+  })
+})
+
+describe('stepForExercise', () => {
+  it('prefers the exercise over the setting, and the setting over the constant', () => {
+    // A stack that moves in 10s is not a 5 lb lift.
+    expect(stepForExercise(toKg(10, 'lb'), toKg(2.5, 'lb'), 'lb')).toBe(10)
+    expect(stepForExercise(null, toKg(2.5, 'lb'), 'lb')).toBe(2.5)
+    expect(stepForExercise(null, null, 'lb')).toBe(WEIGHT_STEPS.lb[0])
+    expect(stepForExercise(undefined, undefined, 'kg')).toBe(WEIGHT_STEPS.kg[0])
+  })
+
+  it('ignores a zero or negative increment rather than freezing the handle', () => {
+    // A step of 0 would make the button and the whole scrub do nothing, which
+    // is worse than the default it is overriding.
+    expect(stepForExercise(0, null, 'lb')).toBe(WEIGHT_STEPS.lb[0])
+    expect(stepForExercise(-5, null, 'lb')).toBe(WEIGHT_STEPS.lb[0])
   })
 })

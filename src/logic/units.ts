@@ -60,6 +60,17 @@ export function fromKg(kg: number, to: Unit): number {
  */
 export const DISPLAY_STEP: Record<Unit, number> = { kg: 0.1, lb: 0.25 }
 
+/**
+ * What a screen shows when it has no exercise to ask.
+ *
+ * **100% of five years of history is lb** - one distinct `Weight Unit` value in
+ * the whole export - and `app_settings` has no unit column, so this is a
+ * constant rather than a setting. It exists because three screens had the same
+ * hard-coded `const UNIT: Unit = 'lb'` and three copies of a decision is three
+ * places to change it.
+ */
+export const DEFAULT_UNIT: Unit = 'lb'
+
 /** Round a display-unit value to that unit's display granularity. */
 export function roundForDisplay(value: number, unit: Unit): number {
   const step = DISPLAY_STEP[unit]
