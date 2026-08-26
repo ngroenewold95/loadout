@@ -269,6 +269,42 @@ describe('migration 0005, the session plan snapshot', () => {
   })
 })
 
+describe('migration 0006, exercise guidance', () => {
+  const GUIDANCE = 6
+
+  it('adds the column over existing rows without touching them', async () => {
+    await applyMigrations(db, upTo(GUIDANCE - 1))
+    const exerciseId = await seedDependents()
+
+    const pending = ALL.length - upTo(GUIDANCE - 1).length
+    await expect(applyMigrations(db, ALL)).resolves.toBe(pending)
+
+    // A nullable column with no CHECK is a plain ADD COLUMN, not the
+    // create-new/copy/drop/rename dance 0001 and 0004 needed - so the point of
+    // this test is that nothing moved, and every child row is still attached.
+    const [row] = await db.query<{
+      id: number
+      name: string
+      base: number | null
+      guidance: string | null
+    }>(
+      `SELECT id, name, default_base_weight_kg AS base, guidance
+         FROM exercises WHERE deleted_at IS NULL`,
+    )
+    expect(row.id).toBe(exerciseId)
+    expect(row.name).toBe('Trap Bar Deadlift')
+    expect(row.base).toBe(29.48)
+    expect(row.guidance).toBeNull()
+
+    for (const table of ['sets', 'template_exercises', 'exercise_aliases']) {
+      const [child] = await db.query<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)
+      expect(child.n, `${table} lost its row`).toBe(1)
+    }
+    const orphans = await db.query('PRAGMA foreign_key_check')
+    expect(orphans).toEqual([])
+  })
+})
+
 describe('migration 0003, the settings tables', () => {
   it('allows exactly one settings row', async () => {
     await applyMigrations(db, ALL)

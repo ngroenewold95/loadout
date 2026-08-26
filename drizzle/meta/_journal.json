@@ -43,6 +43,13 @@
       "when": 1786684088619,
       "tag": "0005_elite_mac_gargan",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787704163935,
+      "tag": "0006_exercise_guidance",
+      "breakpoints": true
     }
   ]
 }

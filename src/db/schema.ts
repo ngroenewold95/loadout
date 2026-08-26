@@ -105,6 +105,10 @@ export const exercises = sqliteTable(
     /** Two-handed dumbbell lifts log the PAIR total; single-arm lifts log the
      *  one bell. Both are "total load", but the UI must render "2 x 100 lb". */
     implementCount: integer('implement_count').notNull().default(1),
+    /** Authored coaching cues, newline separated, one line per cue. Filled by a
+     *  fill-blanks seeder from `logic/exerciseGuidance.ts`, so a hand edit here
+     *  survives a re-run. Null means nothing has been written for this lift. */
+    guidance: text('guidance'),
     notes: text('notes'),
     ...timestamps,
   },
