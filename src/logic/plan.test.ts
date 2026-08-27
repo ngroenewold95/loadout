@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PLAN, REST_S, earnedIncreases, shouldIncreaseLoad } from './plan.ts'
+import { PLAN, REST_S, earnedIncreases, nextLoadStep, shouldIncreaseLoad } from './plan.ts'
 
 describe('plan shape', () => {
   it('is the two-day A/B rotation, 2 sets throughout', () => {
@@ -135,5 +135,56 @@ describe('earnedIncreases', () => {
   /** A set logged without reps is not a set that hit the top of the range. */
   it('treats a missing rep count as zero', () => {
     expect(earnedIncreases(planned, new Map([[1, session(8, null)]]))).toEqual([])
+  })
+})
+
+describe('nextLoadStep', () => {
+  const prescribed = { targetSets: 2, targetRepMax: 8, loadMode: 'total' }
+  const last = (weightKg: number | null, ...reps: (number | null)[]) => ({ weightKg, reps })
+
+  it('steps up when the last session hit the top of the range on every set', () => {
+    expect(nextLoadStep(last(100, 8, 8), prescribed)).toBe(1)
+  })
+
+  it('stays put when it did not', () => {
+    expect(nextLoadStep(last(100, 8, 7), prescribed)).toBe(0)
+    expect(nextLoadStep(last(100, 8), prescribed)).toBe(0)
+  })
+
+  /**
+   * A higher number on an Assisted Chinup is an EASIER set - 420 sets of the
+   * imported history run that way. Adding to it would prescribe going
+   * backwards, so earning it moves the number down.
+   */
+  it('steps DOWN for assistance', () => {
+    expect(nextLoadStep(last(25, 8, 8), { ...prescribed, loadMode: 'assistance' })).toBe(-1)
+  })
+
+  it('says nothing without a rep ceiling', () => {
+    // An exercise added to a workout by hand carries no rep goal, so no goal
+    // was met. This is what stops `Add exercise` prescribing a jump.
+    expect(nextLoadStep(last(100, 8, 8), { ...prescribed, targetRepMax: null })).toBe(0)
+  })
+
+  it('says nothing for a set that carried no weight', () => {
+    // Bodyweight, duration and distance work all land here: there is no load
+    // to raise, so the existing prefill stands untouched.
+    expect(nextLoadStep(last(null, 8, 8), prescribed)).toBe(0)
+  })
+
+  it('says nothing with no last session at all', () => {
+    expect(nextLoadStep(undefined, prescribed)).toBe(0)
+    expect(nextLoadStep(last(100), prescribed)).toBe(0)
+  })
+
+  /** A set logged without reps did not hit the top of anything. */
+  it('treats a missing rep count as zero', () => {
+    expect(nextLoadStep(last(100, 8, null), prescribed)).toBe(0)
+  })
+
+  /** Extra sets do not lower the bar, and must not raise it either. */
+  it('judges only the prescribed number of sets', () => {
+    expect(nextLoadStep(last(100, 8, 8, 5), prescribed)).toBe(1)
+    expect(nextLoadStep(last(100, 5, 8, 8), prescribed)).toBe(0)
   })
 })

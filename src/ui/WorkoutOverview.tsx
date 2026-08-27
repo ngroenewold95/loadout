@@ -26,6 +26,7 @@
  */
 import { useCallback, useState } from 'react'
 import {
+  useActiveSession,
   useEditSessionPlan,
   useEditTemplatePlan,
   useSessionExercises,
@@ -104,6 +105,18 @@ export function WorkoutOverview({ session }: { session: SessionRow }) {
       busy={busy}
       actions={
         <>
+          {/* The only way to Home while a workout is live, and therefore the
+              only way to `Exercises` and `Settings` - both live on Home and
+              neither could be opened mid-workout before this. Docked with the
+              rest, and as far from `Finish` as the row allows: pushing Home
+              changes nothing, but a mis-tap that opens the summary is the
+              fault this screen was built to stop repeating. */}
+          <button
+            className="bg-surface-1 active:bg-surface-3 rounded-2xl px-5 py-4 font-medium"
+            onClick={() => push({ kind: 'home' })}
+          >
+            Home
+          </button>
           <button
             className="bg-surface-1 active:bg-surface-3 flex-1 rounded-2xl py-4 font-medium"
             onClick={() => push({ kind: 'picker', target: { session: session.id } })}
@@ -136,6 +149,15 @@ export function WorkoutOverview({ session }: { session: SessionRow }) {
 export function TemplatePreview({ templateId }: { templateId: number }) {
   const { data: planned } = useTemplateExercises(templateId)
   const { data: templates } = useTemplates()
+  /**
+   * Whether a workout is already running.
+   *
+   * Home is reachable from inside a live workout now, and Home lists templates,
+   * so this preview can be opened while a session exists. Starting a second one
+   * would leave the first unfinished and unreachable - `activeSession` returns
+   * the newest, so the older workout would simply stop being the one resumed.
+   */
+  const { data: live } = useActiveSession()
   const startSession = useStartSession()
   const reset = useNav((s) => s.reset)
   const push = useNav((s) => s.push)
@@ -168,13 +190,22 @@ export function TemplatePreview({ templateId }: { templateId: number }) {
           >
             Edit
           </button>
-          <button
-            className="bg-primary text-on-primary flex-1 rounded-2xl py-4 text-lg font-semibold disabled:opacity-40"
-            disabled={startSession.isPending}
-            onClick={start}
-          >
-            Start workout
-          </button>
+          {live ? (
+            // Not a disabled button: a greyed `Start workout` says the app is
+            // busy, and it is not - there is a workout in progress and the way
+            // to it is back, not here.
+            <p className="text-text-dim flex-1 self-center text-sm">
+              {live.name ?? 'A workout'} is in progress. Finish it first.
+            </p>
+          ) : (
+            <button
+              className="bg-primary text-on-primary flex-1 rounded-2xl py-4 text-lg font-semibold disabled:opacity-40"
+              disabled={startSession.isPending}
+              onClick={start}
+            >
+              Start workout
+            </button>
+          )}
         </>
       }
     />

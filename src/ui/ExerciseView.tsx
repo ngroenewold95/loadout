@@ -69,14 +69,17 @@ import {
   stepReps,
   stepWeight,
   stepForExercise,
+  openingEntry,
 } from '../logic/entry.ts'
-import { shouldIncreaseLoad } from '../logic/plan.ts'
+import { nextLoadStep, shouldIncreaseLoad } from '../logic/plan.ts'
 import { isComplete, nextIncompleteIndex } from '../logic/session.ts'
 import { setSlots, type SetSlot } from '../logic/slots.ts'
 import { useNav } from '../state/nav.ts'
 import { useEntryDraft, useExerciseIndex, useWorkout } from '../state/workout.ts'
 import { DEFAULT_UNIT, formatWeight, weightsEqual, type Unit } from '../logic/units.ts'
 import { startRest } from '../native/restTimer.ts'
+import { ActionItem, ActionSheet } from './ActionSheet.tsx'
+import { CueList } from './CueList.tsx'
 import { EntryField } from './EntryField.tsx'
 import { HistoryCard } from './HistoryCard.tsx'
 import { PlateChips } from './PlateChips.tsx'
@@ -141,6 +144,15 @@ export function ExerciseView({ session, openAt }: Props) {
     },
     [session.id],
   )
+
+  /**
+   * Whether the guidance sheet is open.
+   *
+   * Local `useState` rather than the workout store, unlike the draft: an open
+   * menu is not worth restoring after process death, and nothing pushes over
+   * this screen while it is up.
+   */
+  const [showGuidance, setShowGuidance] = useState(false)
 
   const pagerRef = useRef<HTMLDivElement>(null)
   // The rest lives in the store, not here: the pill that renders it sits in the
@@ -293,7 +305,26 @@ export function ExerciseView({ session, openAt }: Props) {
         ? live
         : null
     const fill = prefillFor(sets ?? [], current.exerciseId, lastTime)
-    const reps = fill.reps ?? current.targetRepMin ?? null
+
+    /**
+     * The programme's own rule, applied to the bar rather than printed.
+     *
+     * `shouldIncreaseLoad` has decided "top of the range on every set -> add
+     * load" since before there was a logging screen, and everything it fed was
+     * advisory text. `openingEntry` is the payoff: the exercise opens at the
+     * weight it earned, with the reps back at the bottom of the range, so the
+     * common case is still one tap. It is pure and tested, so what is left here
+     * is only the writing of the draft.
+     */
+    const opening = openingEntry(
+      fill,
+      lastTime?.sets.map((set) => set.reps) ?? [],
+      current,
+      weightStep,
+      unit,
+    )
+    const weightKg = opening.weightKg
+    const reps = opening.reps
 
     /**
      * Two ways to already be right, and **both** are load-bearing.
@@ -308,7 +339,7 @@ export function ExerciseView({ session, openAt }: Props) {
     if (
       mine &&
       (mine.touched ||
-        (bothNullOr(mine.weightKg, fill.weightKg, weightsEqual) &&
+        (bothNullOr(mine.weightKg, weightKg, weightsEqual) &&
           mine.reps === reps &&
           mine.durationS === fill.durationS &&
           mine.editingSetId === null))
@@ -319,7 +350,7 @@ export function ExerciseView({ session, openAt }: Props) {
     setDraft({
       sessionId: session.id,
       exerciseId: current.exerciseId,
-      weightKg: fill.weightKg,
+      weightKg,
       reps,
       durationS: fill.durationS,
       editingSetId: null,
@@ -328,7 +359,7 @@ export function ExerciseView({ session, openAt }: Props) {
     // `draft` is a dependency so that dropping it - logging a set, saving a
     // correction, cancelling - re-seeds immediately rather than waiting for the
     // refetch to hand back a new `sets` array.
-  }, [current, sets, lastTime, session.id, setDraft, draft])
+  }, [current, sets, lastTime, session.id, setDraft, draft, weightStep, unit])
 
   /**
    * Load a past set's numbers into the entry bar.
@@ -499,9 +530,28 @@ export function ExerciseView({ session, openAt }: Props) {
               one back gesture away and is not a screen a thumb aims at while
               logging. The mis-tap `PROJECT.md` records landed on exactly that
               button. */}
-          <span className="text-text-dim shrink-0 text-sm tabular-nums">
-            {index + 1}/{planned.length}
-          </span>
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="text-text-dim text-sm tabular-nums">
+              {index + 1}/{planned.length}
+            </span>
+            {/* The cues, reachable with a bar in front of you.
+
+                Before this they lived only on the exercise detail screen, so
+                reaching them mid-workout meant backing out to the overview and
+                opening a card menu. It is a DISCLOSURE, not a block of text
+                above the slots: region 1 is pinned and nothing here may push
+                the entry bar around. A sheet costs the layout no height at
+                all, which is why it beats a card at the end of the history
+                scroller. */}
+            <button
+              type="button"
+              aria-label="How to do this exercise"
+              onClick={() => setShowGuidance(true)}
+              className="text-text-dim active:bg-surface-3 size-tap -mr-2 rounded-full text-base"
+            >
+              ⓘ
+            </button>
+          </div>
         </div>
 
         <p className="text-text-dim px-5 pt-1 text-sm">{targetLine}</p>
@@ -653,6 +703,31 @@ export function ExerciseView({ session, openAt }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Over all three regions, so nothing under it moves and the entry bar
+          stays exactly where the thumb left it. `ActionSheet` hands the back
+          gesture a closer, so the first back after opening this closes the
+          sheet rather than leaving the exercise. */}
+      {showGuidance && (
+        <ActionSheet title={current.name} onClose={() => setShowGuidance(false)}>
+          <div className="px-5 pb-2">
+            <CueList
+              guidance={current.guidance}
+              empty="Nothing written for this one yet."
+            />
+          </div>
+          {/* The whole picture - totals, every session, the equipment - is a
+              screen, not a sheet. This is the same item the overview's card
+              menu already offers, so there is one way in from both places. */}
+          <ActionItem
+            label="About this exercise"
+            onClick={() => {
+              setShowGuidance(false)
+              push({ kind: 'exerciseInfo', exerciseId: current.exerciseId })
+            }}
+          />
+        </ActionSheet>
+      )}
     </div>
   )
 }
@@ -705,6 +780,26 @@ function ExercisePage({
   // light. Null when nothing is aimed anywhere, so no stale row stays lit.
   const activeIndex =
     slots.find((s) => s.state === 'active' || s.state === 'editing')?.index ?? null
+
+  /**
+   * Whether the entry bar opened at a raised load, and what it was raised from.
+   *
+   * The bump itself happens once, in the seeding effect above; this recomputes
+   * only the direction, off the same last session and the same rule, so the
+   * number in the bar is never mistaken for what was lifted last time. It says
+   * nothing once a set has been logged here: from then on the bar is repeating
+   * this session's own set, which is not a change to announce.
+   */
+  const previous = history[0]
+  const raisedFrom =
+    done.length === 0 &&
+    previous?.sets[0]?.weightKg != null &&
+    nextLoadStep(
+      { reps: previous.sets.map((set) => set.reps), weightKg: previous.sets[0].weightKg },
+      planned,
+    ) !== 0
+      ? previous.sets[0].weightKg
+      : null
 
   const earnedIncrease =
     planned.targetRepMax != null &&
@@ -771,6 +866,14 @@ function ExercisePage({
           <span className="text-sm">Add set</span>
         </button>
       </div>
+
+      {raisedFrom != null && (
+        <p className="text-text-dim mt-3 text-sm">
+          {planned.loadMode === 'assistance'
+            ? `Less assistance than last time, down from ${formatWeight(raisedFrom, unit)} ${unit}.`
+            : `Load is up from ${formatWeight(raisedFrom, unit)} ${unit} - top of the range last time.`}
+        </p>
+      )}
 
       {earnedIncrease && (
         <p className="mt-3 rounded-xl bg-amber-950 px-3 py-2 text-sm text-amber-300">

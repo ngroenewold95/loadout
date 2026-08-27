@@ -16,6 +16,18 @@
  * reports any live exercise the table cannot find, so a rename surfaces as a
  * failing test rather than a silently empty screen.
  */
+/**
+ * The stored string, as lines to render.
+ *
+ * One parse, used by both surfaces that show cues: the exercise detail screen
+ * and the info sheet on the logging screen. Blank lines are dropped rather than
+ * rendered as empty bullets, because the column is hand-authored and a trailing
+ * newline is not a cue.
+ */
+export function guidanceCues(guidance: string | null | undefined): string[] {
+  return (guidance ?? '').split('\n').filter((line) => line.trim().length > 0)
+}
+
 export const GUIDANCE_BY_EXERCISE: Record<string, string> = {
   // Day A - Trap Bar
   'Trap Bar Deadlift': [
@@ -76,7 +88,13 @@ export const GUIDANCE_BY_EXERCISE: Record<string, string> = {
     'Lean the torso forward to bias the chest rather than the triceps.',
     'Elbows flare slightly out, not pinned to the ribs.',
     'Descend until the shoulders are just below the elbows, no deeper.',
-    'Log it as bodyweight when nothing is hanging from the belt.',
+    'This is the unassisted one; the machine version is its own exercise.',
+  ].join('\n'),
+  'Assisted Chest Dip': [
+    'Same movement, with the machine carrying part of you.',
+    'Lean the torso forward to bias the chest rather than the triceps.',
+    'Descend until the shoulders are just below the elbows, no deeper.',
+    'The number is assistance: less of it is the harder set, and the progress.',
   ].join('\n'),
 
   // Day B - RDL

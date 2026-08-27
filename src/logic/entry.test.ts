@@ -14,6 +14,7 @@ import {
   stepWeight,
   WEIGHT_STEPS,
   stepForExercise,
+  openingEntry,
 } from './entry.ts'
 import { formatWeight, toKg, weightsEqual } from './units.ts'
 
@@ -207,5 +208,96 @@ describe('stepForExercise', () => {
     // is worse than the default it is overriding.
     expect(stepForExercise(0, null, 'lb')).toBe(WEIGHT_STEPS.lb[0])
     expect(stepForExercise(-5, null, 'lb')).toBe(WEIGHT_STEPS.lb[0])
+  })
+})
+
+describe('openingEntry', () => {
+  const prescribed = {
+    targetSets: 2,
+    targetRepMin: 5,
+    targetRepMax: 8,
+    loadMode: 'total',
+  }
+  const lb = (pounds: number) => toKg(pounds, 'lb')
+  const lastSession = (pounds: number, reps: number) => ({
+    weightKg: lb(pounds),
+    reps,
+    source: 'last-session' as const,
+  })
+
+  it('opens at the earned weight, with the reps back at the bottom', () => {
+    const open = openingEntry(lastSession(355, 8), [8, 8], prescribed, 5, 'lb')
+    expect(formatWeight(open.weightKg!, 'lb')).toBe('360')
+    expect(open.reps).toBe(5)
+    expect(open.raised).toBe(true)
+  })
+
+  it('leaves last session alone when it did not earn it', () => {
+    const open = openingEntry(lastSession(355, 8), [8, 7], prescribed, 5, 'lb')
+    expect(weightsEqual(open.weightKg!, lb(355))).toBe(true)
+    expect(open.reps).toBe(8)
+    expect(open.raised).toBe(false)
+  })
+
+  /**
+   * The rule is about the NEXT session, not the next set. Set 2 repeats set 1,
+   * and raising the load between them is not what the programme says.
+   */
+  it('never raises a prefill taken from this session', () => {
+    const open = openingEntry(
+      { weightKg: lb(355), reps: 8, source: 'current-session' },
+      [8, 8],
+      prescribed,
+      5,
+      'lb',
+    )
+    expect(weightsEqual(open.weightKg!, lb(355))).toBe(true)
+    expect(open.raised).toBe(false)
+  })
+
+  /** A higher number on an Assisted Chinup is an easier set, so earning it goes down. */
+  it('moves assistance the other way', () => {
+    const open = openingEntry(
+      lastSession(25, 8),
+      [8, 8],
+      { ...prescribed, loadMode: 'assistance' },
+      5,
+      'lb',
+    )
+    expect(formatWeight(open.weightKg!, 'lb')).toBe('20')
+    expect(open.raised).toBe(true)
+  })
+
+  it('leaves a set that carried no weight exactly as it was', () => {
+    const open = openingEntry(
+      { weightKg: null, reps: 8, source: 'last-session' },
+      [8, 8],
+      prescribed,
+      5,
+      'lb',
+    )
+    expect(open.weightKg).toBeNull()
+    expect(open.reps).toBe(8)
+    expect(open.raised).toBe(false)
+  })
+
+  it('falls back to the rep target when the prefill has none', () => {
+    // A brand new exercise: nothing to repeat, so the row asks for what the
+    // programme wants rather than opening empty.
+    const open = openingEntry(
+      { weightKg: null, reps: null, source: 'none' },
+      [],
+      prescribed,
+      5,
+      'lb',
+    )
+    expect(open.reps).toBe(5)
+  })
+
+  it('uses the exercise increment it is handed, not a constant', () => {
+    // A stack that moves in 10s is not a 5 lb lift - `stepForExercise` resolves
+    // that, and this must spend whatever it resolved.
+    const open = openingEntry(lastSession(100, 8), [8, 8], prescribed, 10, 'lb')
+    expect(formatWeight(open.weightKg!, 'lb')).toBe('110')
   })
 })

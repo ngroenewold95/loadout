@@ -225,6 +225,15 @@ export interface TemplateExerciseRow {
   incrementKg: number | null
   /** Free text, often null. Feed it to `muscleMark`, which degrades safely. */
   primaryMuscle: string | null
+  /**
+   * Coaching cues, newline separated, for the info sheet on the logging screen.
+   *
+   * Carried on this row rather than fetched when the sheet opens: it is one more
+   * column on a query the screen already runs, against a query that pulls every
+   * session of the exercise and its lifetime totals. The cues are wanted with a
+   * bar in front of you, which is not the moment to cross the bridge.
+   */
+  guidance: string | null
 }
 
 export function listTemplateExercises(
@@ -247,7 +256,8 @@ export function listTemplateExercises(
             ${BASE_WEIGHT_KG} AS "baseWeightKg",
             e.loading,
             e.default_increment_kg AS "incrementKg",
-            e.primary_muscle AS "primaryMuscle"
+            e.primary_muscle AS "primaryMuscle",
+            e.guidance
        FROM template_exercises te
        JOIN exercises e ON e.id = te.exercise_id
       WHERE te.template_id = ?
@@ -286,7 +296,8 @@ export function listSessionExercises(
             ${BASE_WEIGHT_KG} AS "baseWeightKg",
             e.loading,
             e.default_increment_kg AS "incrementKg",
-            e.primary_muscle AS "primaryMuscle"
+            e.primary_muscle AS "primaryMuscle",
+            e.guidance
        FROM session_exercises se
        JOIN exercises e ON e.id = se.exercise_id
       WHERE se.session_id = ?
@@ -1318,6 +1329,61 @@ export function exerciseStats(db: Db, exerciseId: number): Promise<ExerciseStats
         AND s.deleted_at IS NULL
         AND ses.deleted_at IS NULL`,
     [exerciseId],
+  )
+}
+
+export interface ExerciseSessionRow {
+  sessionId: number
+  localDate: string
+  /** Heaviest set that was load, never assistance. */
+  bestWeightKg: number | null
+  /** Least assistance used, which is the best set when the number inverts. */
+  leastAssistKg: number | null
+  bestReps: number | null
+  bestDurationS: number | null
+  bestDistanceM: number | null
+  setCount: number
+}
+
+/**
+ * One row per session of one exercise, oldest first: the trend, as data.
+ *
+ * Every candidate for "best set" comes back as its own column rather than the
+ * query choosing between them. Which one is the trend depends on the exercise's
+ * `tracking_type` and on whether its number inverts, and that decision is pure
+ * and tested in `logic/trend.ts`. The SQL's job is to be one statement over the
+ * rows; the meaning is decided where it can be tested without a database.
+ *
+ * Oldest first because a chart reads left to right, unlike every other history
+ * read in this file.
+ */
+export function exerciseSessions(
+  db: Db,
+  exerciseId: number,
+  limit = 200,
+): Promise<ExerciseSessionRow[]> {
+  return db.query<ExerciseSessionRow>(
+    `SELECT * FROM (
+       SELECT ses.id AS "sessionId",
+              ses.local_date AS "localDate",
+              MAX(CASE WHEN s.load_mode = 'assistance' THEN NULL ELSE s.weight_kg END)
+                AS "bestWeightKg",
+              MIN(CASE WHEN s.load_mode = 'assistance' THEN s.weight_kg END)
+                AS "leastAssistKg",
+              MAX(s.reps) AS "bestReps",
+              MAX(s.duration_s) AS "bestDurationS",
+              MAX(s.distance_m) AS "bestDistanceM",
+              COUNT(s.id) AS "setCount"
+         FROM sets s
+         JOIN sessions ses ON ses.id = s.session_id
+        WHERE s.exercise_id = ?
+          AND s.deleted_at IS NULL
+          AND ses.deleted_at IS NULL
+        GROUP BY ses.id
+        ORDER BY ses.local_date DESC, ses.id DESC
+        LIMIT ?
+     ) ORDER BY "localDate", "sessionId"`,
+    [exerciseId, limit],
   )
 }
 

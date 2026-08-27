@@ -42,6 +42,7 @@ const SCREEN_TITLES: Record<Screen['kind'], string> = {
   templateEdit: 'Edit workout',
   settings: 'Settings',
   exerciseInfo: 'Exercise',
+  home: 'Home',
 }
 
 function Shell() {
@@ -140,6 +141,14 @@ function Shell() {
           <ExerciseLibrary />
         ) : screen?.kind === 'exerciseInfo' ? (
           <ExerciseDetail exerciseId={screen.exerciseId} />
+        ) : screen?.kind === 'home' ? (
+          // The same Home as the root, pushed over a live workout so that
+          // `Exercises` and `Settings` are reachable without finishing first.
+          // `Home` itself is what refuses to start a second session.
+          <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto pt-4">
+            <Home />
+            <div className="pb-6" />
+          </div>
         ) : isLoading ? (
           <p className="text-text-dim px-5 py-8 opacity-70">Opening database…</p>
         ) : screen?.kind === 'exercise' && session ? (

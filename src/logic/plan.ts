@@ -215,3 +215,52 @@ export function earnedIncreases(
   }
   return earned
 }
+
+/** The least a past session has to be to say which way the load should move. */
+interface LastLoad {
+  /** Every working set of that exercise in that session, in order. */
+  reps: readonly (number | null)[]
+  /** What it was loaded with. Null for a set that carried no weight. */
+  weightKg: number | null
+}
+
+/**
+ * Which way the next session's load should move, as a number of handle steps.
+ *
+ * `+1` up, `-1` down, `0` stay where it is. The caller applies it with
+ * `stepWeight`, so the size of a step stays in one place - `stepForExercise`,
+ * which already resolves the exercise's own increment, then the gym setting,
+ * then the constant. This function only decides the direction, which is why it
+ * needs no unit and no increment.
+ *
+ * **`assistance` moves DOWN.** A higher number on an Assisted Chinup is an
+ * easier set - 420 sets of the imported history run that way, and both
+ * `sessionTotals` and the volume expression in `repo.ts` already encode it.
+ * Adding load there would be prescribing a step backwards.
+ *
+ * Returns 0 rather than throwing for everything it cannot answer: no rep
+ * ceiling, no weight on the last session (bodyweight, duration and distance
+ * work all land here), or a session that did not earn it.
+ */
+export function nextLoadStep(
+  last: LastLoad | undefined,
+  prescribed: {
+    targetSets: number | null
+    targetRepMax: number | null
+    /** `'assistance'` inverts. Left as a string so `logic/` imports no schema. */
+    loadMode: string
+  },
+): -1 | 0 | 1 {
+  if (!last || last.weightKg == null) return 0
+  if (prescribed.targetRepMax == null) return 0
+  if (last.reps.length === 0) return 0
+
+  const reps = last.reps.map((r) => r ?? 0)
+  const earned = shouldIncreaseLoad(
+    reps,
+    prescribed.targetSets ?? reps.length,
+    prescribed.targetRepMax,
+  )
+  if (!earned) return 0
+  return prescribed.loadMode === 'assistance' ? -1 : 1
+}

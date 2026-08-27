@@ -14,6 +14,7 @@
  * continuous scrub, or tap the number for the keypad. The scrub is what makes
  * a large change cheap, so the keypad stays the rare path it was designed to be.
  */
+import { nextLoadStep } from './plan.ts'
 import { fromKg, roundForDisplay, toKg, type Unit } from './units.ts'
 import type { TrackingType } from '../db/schema.ts'
 
@@ -225,4 +226,55 @@ export function formatTarget(
   const reps = formatRepTarget(repMin, repMax)
   if (sets == null) return reps
   return reps == null ? `${sets} sets` : `${sets} × ${reps}`
+}
+
+/**
+ * What the entry bar holds when an exercise is opened, progression included.
+ *
+ * `prefillFor` answers "what was lifted", and the programme's rule answers
+ * "what should be lifted next". Composed here rather than in the screen so the
+ * whole decision is one pure function with tests, leaving the effect that calls
+ * it to do nothing but write the draft.
+ *
+ * **Only a `last-session` prefill is bumped.** A `current-session` one is set 2
+ * repeating set 1, and the rule is about the next session, not the next set.
+ * `none` has nothing to bump either.
+ */
+export function openingEntry(
+  fill: {
+    weightKg: number | null
+    reps: number | null
+    source: 'current-session' | 'last-session' | 'none'
+  },
+  lastReps: readonly (number | null)[],
+  prescribed: {
+    targetSets: number | null
+    targetRepMin: number | null
+    targetRepMax: number | null
+    loadMode: string
+  },
+  /** One handle step, in the display unit - see `stepForExercise`. */
+  weightStep: number,
+  unit: Unit,
+): { weightKg: number | null; reps: number | null; raised: boolean } {
+  const step =
+    fill.source === 'last-session'
+      ? nextLoadStep({ reps: lastReps, weightKg: fill.weightKg }, prescribed)
+      : 0
+
+  if (step === 0) {
+    return {
+      weightKg: fill.weightKg,
+      reps: fill.reps ?? prescribed.targetRepMin ?? null,
+      raised: false,
+    }
+  }
+
+  return {
+    weightKg: stepWeight(fill.weightKg, step * weightStep, unit),
+    // A raised load at the old top of the range is not the prescription: the
+    // range starts again at its bottom.
+    reps: prescribed.targetRepMin ?? fill.reps ?? null,
+    raised: true,
+  }
 }

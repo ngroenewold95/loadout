@@ -82,6 +82,20 @@ export type Screen =
   | { kind: 'templateEdit'; templateId: number }
   /** The handful of settings that matter under a bar. */
   | { kind: 'settings' }
+  /**
+   * Home, pushed rather than as the root.
+   *
+   * While a workout is live the root is `WorkoutOverview`, so Home is
+   * unreachable - and `Exercises` and `Settings` are entered only from Home, so
+   * neither could be opened mid-workout. Found on the phone while verifying the
+   * gym settings.
+   *
+   * Pushing the same component keeps one implementation of Home rather than
+   * growing a second menu somewhere else. What it costs is a guard: a template
+   * preview opened from here must not offer `Start workout`, or this becomes a
+   * way to start a second session on top of the first.
+   */
+  | { kind: 'home' }
 
 interface NavState {
   /** Root first. Empty means the root screen, which is not a member. */

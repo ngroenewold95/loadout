@@ -29,6 +29,19 @@ describe('nav stack', () => {
     expect(nav().stack).toEqual([])
   })
 
+  it('pushes Home over a live workout and pops back to it', () => {
+    // While a session is live the ROOT is the workout overview, so Home is a
+    // pushed screen rather than the thing underneath. What matters is that one
+    // back returns to the workout rather than leaving the app: the root is not
+    // on the stack, so a stack of one is exactly "Home over the workout".
+    nav().push({ kind: 'home' })
+    nav().push({ kind: 'settings' })
+    expect(nav().stack).toEqual([{ kind: 'home' }, { kind: 'settings' }])
+    expect(nav().back()).toBe(true)
+    expect(nav().back()).toBe(true)
+    expect(nav().stack).toEqual([])
+  })
+
   it('reports false when there is nothing to pop', () => {
     // This is what tells the caller to leave the app rather than swallow the
     // gesture. A void back() could not.
