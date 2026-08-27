@@ -122,9 +122,10 @@ export const EQUIPMENT_BY_EXERCISE: Record<string, Equipment> = {
   'Cable Row': CABLE,
   'Pallof Press': CABLE,
 
-  // Bodyweight, weighted or not. `Chinup` and `Chest Dip` appear in the history
-  // both ways, which is why the tracking type stays what it is and only the
-  // loading is stated here.
+  // Bodyweight, and since the assisted split every one of these really is:
+  // the weighted `Chest Dip` and `Chinup` rows are their own exercises now, so
+  // the plain names carry no load at all.
+  'Assisted Chest Dip': BODYWEIGHT,
   Birddogs: BODYWEIGHT,
   'Box Jump': BODYWEIGHT,
   'Chest Dip': BODYWEIGHT,

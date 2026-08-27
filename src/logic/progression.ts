@@ -49,6 +49,41 @@ export const ASSISTED_EXERCISES = new Set([
   'Chest Dip',
 ])
 
+/**
+ * One name covering two movements, split by whether the set carried a weight.
+ *
+ * `Chest Dip` is the case that forced this: 127 of its sets record machine
+ * assistance and 55 have no weight at all, which is one row loaded in two
+ * opposite directions. It cost a tap on every bodyweight day - the exercise
+ * inferred `weight_reps`, so the weight field was required and `LOG SET` sat
+ * disabled until a number was typed - and it would have made "best set" and any
+ * future PR detection branch per row forever.
+ *
+ * Weighted rows become `Assisted <name>`; unweighted rows keep the plain name
+ * and infer `bodyweight`. A name that already says `Assisted` is left alone, so
+ * `Assisted Pullup` does not become `Assisted Assisted Pullup`.
+ *
+ * **`Chinup` merges into the `Assisted Chinup` the export already has**, and
+ * that is a merge rather than a new exercise because the rows say so, measured
+ * against `db/loadout.sqlite` before this was written: the two never appear in
+ * the same session (0 of 343), the weights run 40-115 lb against 20-115 lb, and
+ * both trend downward over the same years at the same rep counts. This does not
+ * contradict the alias rule in `PROJECT.md` - that rule refuses to merge
+ * distinct movements, and these are one movement under two labels.
+ */
+export function splitAssistedName(rawName: string, weighted: boolean): string {
+  if (!weighted || !ASSISTED_EXERCISES.has(rawName)) return rawName
+  return rawName.startsWith('Assisted ') ? rawName : `Assisted ${rawName}`
+}
+
+/** The exercise a row belongs to after the split. One rule, both passes. */
+function exerciseNameOf(record: Record<string, string>): string {
+  return splitAssistedName(
+    record[COLUMNS.exercise],
+    parseNumber(record[COLUMNS.weight]) !== null,
+  )
+}
+
 /** Two-handed dumbbell work logs the PAIR total; single-arm logs one bell. */
 export const DUMBBELL_PAIR_HINT = /^(?!Single-Arm)(.*\bDumbbell\b.*)$/
 
@@ -204,7 +239,9 @@ export function mapExport(rows: RawRow[]): MappedExport {
       const rec = row.record
       const rawWeight = parseNumber(rec[COLUMNS.weight])
       const unit = (rec[COLUMNS.weightUnit]?.trim() || null) as 'kg' | 'lb' | null
-      const exerciseName = rec[COLUMNS.exercise]
+      // The split name, so a weighted Chest Dip and a bodyweight one are two
+      // exercises from here on. Anomalies still report what the export said.
+      const exerciseName = exerciseNameOf(rec)
 
       if (rawWeight !== null && unit === null) {
         anomalies.push({ kind: 'weight-without-unit', detail: exerciseName, line: row.line })
@@ -229,7 +266,7 @@ export function mapExport(rows: RawRow[]): MappedExport {
         enteredValue: rawWeight,
         enteredUnit: rawWeight === null ? null : unit,
         loadMode:
-          rawWeight !== null && ASSISTED_EXERCISES.has(exerciseName)
+          rawWeight !== null && ASSISTED_EXERCISES.has(rec[COLUMNS.exercise])
             ? 'assistance'
             : 'total',
         reps,
@@ -256,9 +293,17 @@ export function mapExport(rows: RawRow[]): MappedExport {
   }
 
   // ---- exercises --------------------------------------------------------
+  /**
+   * Grouped by the SPLIT name, not the raw one.
+   *
+   * This is the load-bearing half of the split. Grouping on the export's own
+   * name would leave `Assisted Chest Dip` never created and `Chest Dip` still
+   * inferring `weight_reps` off the weighted rows that no longer belong to it -
+   * which is the exact fault the split exists to fix.
+   */
   const byExercise = new Map<string, RawRow[]>()
   for (const row of rows) {
-    const name = row.record[COLUMNS.exercise]
+    const name = exerciseNameOf(row.record)
     const bucket = byExercise.get(name)
     if (bucket) bucket.push(row)
     else byExercise.set(name, [row])
@@ -267,7 +312,16 @@ export function mapExport(rows: RawRow[]): MappedExport {
   const exercises = [...byExercise].map(([name, exRows]) => ({
     name,
     trackingType: inferTrackingType(exRows),
-    loadMode: (ASSISTED_EXERCISES.has(name) ? 'assistance' : 'total') as LoadMode,
+    // Read off the rows rather than the name: after the split, an assisted
+    // group holds exactly the weighted rows of an assisted movement, and the
+    // plain group holds none of them.
+    loadMode: (exRows.some(
+      ({ record }) =>
+        parseNumber(record[COLUMNS.weight]) !== null &&
+        ASSISTED_EXERCISES.has(record[COLUMNS.exercise]),
+    )
+      ? 'assistance'
+      : 'total') as LoadMode,
   }))
 
   sessions.sort((a, b) => a.startedAtUtc - b.startedAtUtc)

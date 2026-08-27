@@ -15,7 +15,7 @@ import { readFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:f
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { parseCsv, toRecords } from '../src/logic/csv.ts'
-import { mapExport, COLUMNS } from '../src/logic/progression.ts'
+import { mapExport, splitAssistedName, COLUMNS } from '../src/logic/progression.ts'
 import { fromKg } from '../src/logic/units.ts'
 import { loadMigrations } from './migrate.ts'
 import { applyMigrations } from '../src/db/migrations.ts'
@@ -314,7 +314,13 @@ const perExercise = db
 
 const csvPerExercise = new Map<string, { n: number; reps: number }>()
 for (const { record } of records) {
-  const k = record[COLUMNS.exercise]
+  // Through the assisted split, the same rule the mapper used. Counting under
+  // the export's own name would report a mismatch on every exercise the split
+  // touches while the rows themselves are perfectly accounted for.
+  const k = splitAssistedName(
+    record[COLUMNS.exercise],
+    Number.isFinite(Number(record[COLUMNS.weight])) && record[COLUMNS.weight]?.trim() !== '',
+  )
   const cur = csvPerExercise.get(k) ?? { n: 0, reps: 0 }
   cur.n++
   const r = Number(record[COLUMNS.reps])

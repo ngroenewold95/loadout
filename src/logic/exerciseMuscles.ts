@@ -21,6 +21,7 @@ import type { Muscle } from './muscles.ts'
 
 export const MUSCLE_BY_EXERCISE: Record<string, Muscle | null> = {
   // Chest
+  'Assisted Chest Dip': 'chest',
   'Barbell Bench Press': 'chest',
   'Chest Dip': 'chest',
   'Dumbbell Fly': 'chest',
