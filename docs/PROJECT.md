@@ -4,8 +4,8 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-08-25 (stages 12 to 16: library, template editor, plate
-chips, gym settings, synced-folder export)
+Last updated: 2026-08-26 (stages 17 to 20 verified on device: mid-workout
+reachability, progression prefill, the assisted split, trends)
 
 ---
 
@@ -92,13 +92,20 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
 - **The gym settings, verified on device** - increment, keep screen on, and the
   three rest-timer toggles, all in SQLite. See below.
 - **Synced-folder export, verified on device including uninstall.** See below.
-- 256 tests passing, typecheck and lint clean
+- 288 tests passing, typecheck and lint clean
 
 Everything that was built and wired to nothing is now wired: `platesFor` has a
 caller, `app_settings` and `plate_inventory` are seeded, and `exercises.loading`
 / `modality` / `default_increment_kg` all have both a writer and a reader.
 
-Not built yet: stage 17, deleting the spikes.
+- **Mid-workout reachability, progression prefill, the assisted split and the
+  first chart, all verified on device** (2026-08-26). Stages 17 to 20 were built
+  in one batch with the phone disconnected and then proved in a single session
+  of 17 checks. See below.
+- 288 tests passing, typecheck and lint clean
+
+Not built yet: deleting the spikes, which is now stage 21 and runs immediately
+before the cutover.
 
 ---
 
@@ -1999,6 +2006,189 @@ on a device with backup enabled. Use `pm clear` before pushing a database.
 
 ---
 
+## Stages 17 to 20 - DONE
+
+Four stages built in one batch with the phone disconnected, then verified in one
+device session on 2026-08-26. This document has said "prove each stage on the
+phone before starting the next" since stage 3, and that was suspended here
+deliberately, at the user's direction.
+
+Two conditions made the batch safe enough to run that way, and both were kept:
+each stage put its rule in a pure tested function, so what could be wrong on
+device was the wiring rather than the decision; and none of them adds a
+migration.
+
+**The bet paid, once.** 17 checks, 16 passed first time. The one failure was
+cosmetic and is fixed and re-measured: see "What the device session found".
+
+### 17. Reachable mid-workout
+
+Two gaps this document had recorded under "Not blocking cutover", both found on
+the phone.
+
+**Guidance from the logging screen.** The pinned header carries an info
+affordance beside the `n/N` counter, opening the cues in an `ActionSheet`. A
+sheet because region 1 is pinned and nothing may push the entry bar around: an
+overlay costs the layout no height. `CueList.tsx` is the cues, shared with the
+exercise detail screen, and `guidanceCues` is the one parse both use - the same
+reuse argument that keeps the entry bar the only number editor. The text arrives
+as one more column on the session-plan query the screen already runs, rather
+than through `exerciseDetail`, which pulls lifetime totals and every session.
+
+**Home over a live workout.** `Exercises` and `Settings` are entered only from
+Home, and while a session is live the root is the overview, so neither could be
+opened mid-workout. Home is a pushed screen kind now, reached from a `Home`
+button docked with `Add exercise` and `Finish` and placed as far from `Finish`
+as that row allows. The guard that makes it safe: a template preview opened from
+there offers **no** `Start workout`, and says which workout is in progress
+instead. `startSession` already refuses a second session; this is the readable
+half of the same rule.
+
+### 18. The progression cue pre-fills the weight
+
+`shouldIncreaseLoad` had decided "top of the range on every set -> add load"
+since before there was a logging screen, and everything it fed was advisory
+text. Now the exercise opens at the weight it earned, with reps back at the
+bottom of the range, so the common case is still one tap.
+
+- `nextLoadStep` in `logic/plan.ts` decides the **direction** only: `+1`, `-1`
+  or `0`. The size comes from `stepForExercise`, so the increment stays resolved
+  in one place - the exercise's own column, then the gym setting, then the
+  constant.
+- **`assistance` moves down.** A higher number on an Assisted Chinup is an
+  easier set, which `sessionTotals` and the volume expression already encode.
+- `openingEntry` in `logic/entry.ts` composes it with `prefillFor`, so the
+  effect that seeds the draft writes and decides nothing. **Only a
+  `last-session` prefill is bumped**: a `current-session` one is set 2 repeating
+  set 1, and the rule is about the next session, not the next set.
+- The seeded draft is still **pristine**, so a hand edit still wins.
+- The page says what happened - "Load is up from 355 lb" - so the number in the
+  bar is not mistaken for what was lifted last time. It disappears once a set
+  has been logged there.
+
+### 19. Chest Dip and Chinup, split
+
+Deferred since the import, and taken now because the cutover has not happened:
+today it is an importer change plus a re-import, and afterwards it would be a
+data migration over five years of native history.
+
+**Measured against `db/loadout.sqlite` before anything was changed**, which is
+what the rule turned on:
+
+| Rows | Span | |
+|---|---|---|
+| `Chest Dip` weighted | 2023-10-25 to 2025-12-29 | 127, all `assistance` |
+| `Chest Dip` no weight | 2025-01-02 to 2026-08-13 | 55 |
+| `Chinup` weighted | 2023-10-30 to 2026-01-08 | 44, 40-115 lb |
+| `Assisted Chinup` | 2023-12-18 to 2026-07-22 | 140, 20-115 lb |
+
+Weighted rows become `Assisted <name>`; unweighted rows keep the plain name. So
+`Chest Dip` becomes two exercises, and **weighted `Chinup` merges into the
+`Assisted Chinup` the export already had** - a merge the rows justify: the two
+never appear in the same session (0 of 343), the weights and rep counts are the
+same movement, and both trend downward over the same years. This does not
+contradict the alias rule above, which refuses to merge *distinct* movements.
+
+The load-bearing edit is that the **exercise list is built from the split name**.
+Grouped on the export's own name, `Assisted Chest Dip` would never be created
+and `Chest Dip` would keep inferring `weight_reps` off rows that no longer
+belong to it - which is the exact fault the split exists to fix.
+
+After the re-import, measured in the database: `Chest Dip` is `bodyweight` with
+55 sets, `Assisted Chest Dip` is `weight_reps` / `assistance` with 127,
+`Assisted Chinup` holds 184, and plain `Chinup` is `bodyweight` with 8. **Total
+volume still reconciles exactly at 7,543,590 lb**, because per-set `load_mode`
+is untouched: rows move between exercises, and no row changes what it means.
+
+The reconciliation's own per-exercise check had to be taught the split, or every
+exercise it touches reports a mismatch while the rows are perfectly accounted
+for.
+
+**What this fixes on device, and is exactly what has not been tapped yet:**
+`Chest Dip` was `weight_reps`, so on a bodyweight day the weight field was
+required and `LOG SET` sat disabled until a number was typed.
+
+### 20. Trends
+
+The first chart in the app. `exerciseSessions` is one statement returning every
+candidate for "best set" per session, oldest first, and `logic/trend.ts` decides
+which of them the exercise is measured by - so the branch is pure and tested and
+the chart component holds no opinion about what it is drawing.
+
+- **`assistance` is drawn with the y axis reversed**, because the best set is
+  the least assistance and a plain plot would read five years of getting
+  stronger as decline. The heading says "less is stronger" outright rather than
+  leaving the flip to be noticed.
+- **Bodyweight work picks its measure once for the whole series**, not per
+  session: `Chinup` and `Chest Dip` carry both weighted and unweighted sessions,
+  and pounds against rep counts on one axis is a line that means two things at
+  either end.
+- One series, so **no legend** - the heading names the line, and only the first
+  and last points carry a number.
+- **`recharts` is a new dependency**, taken rather than hand-rolled. It costs
+  **356 kB raw / 104 kB gzipped**, taking the bundle from 372 kB to 728 kB. The
+  app is installed and offline and fetches nothing, so this buys ergonomics with
+  something close to free here; `uplot` is the smaller alternative if that
+  judgement turns out to be wrong on device.
+
+### Measured on device, 2026-08-26
+
+Screenshot before every tap. Run against the real 6,206-set history after a
+re-import, `VACUUM INTO`, `pm clear` and a push.
+
+| Step | Measured |
+|---|---|
+| Home after the push | `343 workouts · 6,206 sets · 7.3M lb · 507 hours · since 2021-07-06`, both templates `not done yet` |
+| `Chest Dip` on a bodyweight day | weight field empty, `LOG SET` **enabled** - `uiautomator` reports `enabled="true"`. History cards read `8 reps` / `6 reps`, no weights |
+| `Assisted Chest Dip` in the library | its own exercise: 127 sets, 48 sessions, `LEAST ASSIST 10 lb`, assistance guidance |
+| `Assisted Chinup` | 184 sets, which is the 140 it had plus the 44 merged in |
+| Info affordance in the header | sheet opens with the four cues and `About this exercise`; nothing under it moved |
+| Back with the sheet open | closes the **sheet**; still on the exercise, `topResumedActivity` still loadout |
+| `About this exercise` | pushes the detail screen; back returns to the same exercise |
+| `Home` from the overview | Home over the live workout, rest pill still in the app bar |
+| Day A preview from that Home | **no `Start workout`** - `Day A - Trap Bar is in progress. Finish it first.` |
+| `Settings` from that Home | opens; back twice lands in the live workout with `Pallof Press 1/2 sets` intact |
+| Pallof Press, earned last time | opens **30 lb × 6** from `25 lb × 10, 10`, with `Load is up from 25 lb - top of the range last time.` |
+| Trap Bar Deadlift, not earned | opens `365 lb × 8`, no message |
+| Log set 1 of Pallof | slot 1 rewrote to `30 × 6`, bar still `30 × 6` - **set 2 is not raised again**, and the message is gone |
+| Edit to 370, back out, re-open | `370 lb`, plate chips updated, **not re-bumped** |
+| Assisted Pullup, 35 lb × 8, 8, then finished and restarted | opens **30 lb × 5**, with `Less assistance than last time, down from 35 lb.` |
+| Summary | 3 sets, volume `180 lb` = Pallof's 30 × 6 alone. The two assistance sets contribute nothing |
+| Force-stop mid-workout, relaunch | resumes to the overview with the workout intact |
+| Assisted Chinup chart | 75 sessions plotted, axis reversed, `LEAST ASSISTANCE, LB` and `less is stronger`; the line rises as the assistance falls |
+| Nordic Curl, one session | a single dot, no crash |
+
+### What the device session found
+
+**The chart's axis was unreadable, and the cause was the unit.** Ticks came out
+`33 / 66.25 / 99.25 / 132.25 lb`: the values were plotted in kilograms and
+formatted as pounds, so the round numbers the chart chose were round in the
+wrong unit. `66.25 lb` then wrapped onto two lines and the bottom label sat on
+top of the date beneath it.
+
+Fixed by **converting to the display unit before plotting** and naming the unit
+once in the heading rather than on every tick. Re-measured on the phone: ticks
+`30 / 60 / 90 / 120`, heading `LEAST ASSISTANCE, LB`, nothing wrapped and
+nothing overlapping. This is the one thing four stages of building blind cost,
+and it was cosmetic.
+
+**`recharts` runs in the WebView**, which had never been tried: 75 points draw
+without a stumble on the real history.
+
+### A push can silently land the wrong file
+
+The first push appeared to succeed and the app came up with `Chest Dip` still
+`weight_reps`. `adb push` under Git Bash rewrote `/data/local/tmp/loadout.db`
+into `C:/Program Files/Git/data/local/tmp/loadout.db`, so the staged file was
+never replaced and `run-as ... cp` copied **August's** database over the new one.
+The tell was the app writing a `before-0006` backup: a current file has 0006
+already applied.
+
+Prefix every `adb` call that names a device path with `MSYS_NO_PATHCONV=1`, and
+check the pushed file's timestamp before copying it into `databases/`.
+
+---
+
 ## The cutover procedure
 
 **Written down, not performed.** The device database is still disposable and
@@ -2109,7 +2299,17 @@ the next - screenshot before every tap.
     above and "The cutover procedure" for the written-down steps. The cutover
     itself has **not** been performed: the device database is still disposable.
 
-17. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
+17. ~~**Reachable mid-workout.**~~ **Done and verified on device** - see
+    "Stages 17 to 20" above.
+18. ~~**The progression cue pre-fills the weight.**~~ **Done and verified on
+    device**, including the assistance inversion, proved end to end by logging
+    the sets that earn it and starting the next workout.
+19. ~~**Chest Dip and Chinup, split.**~~ **Done and verified on device**, with a
+    re-import that reconciles exactly.
+20. ~~**Trends.**~~ **Done and verified on device.** `recharts` is a new
+    dependency, and the axis needed one fix that only the phone could show.
+
+21. **Delete the spikes** - `src/ui/TimerSpike.tsx` and `src/ui/DbSmoke.tsx`,
     plus the `debug` screen in `App.tsx`. **`DbSmoke` has stopped being the only
     on-device proof of the `DENSE_RANK` window function**: the exercise detail
     screen from stage 12 runs the same window function on the phone over the
@@ -2117,11 +2317,17 @@ the next - screenshot before every tap.
     no caller at all and goes with it. ~~The
     `debug` link is still in the header and is reachable in a demo.~~ **Done in
     11b**: the label is gone, and the way in is five taps on an unlabelled
-    corner of the app bar.
+    corner of the app bar. **Moved to last** and run immediately before the
+    cutover: `DbSmoke` is the quickest on-device sanity check after a repo
+    change, and stages 17 to 20 are all repo changes waiting on one device
+    session.
 
 ### Not blocking cutover
 
-- **Guidance has to be reachable from the logging screen**, not only from the
+- ~~**Guidance has to be reachable from the logging screen**~~ **Built in stage
+  17**, as the info affordance in the pinned header opening an `ActionSheet` -
+  the safer of the two candidates below, for the reason given there, and
+  verified on the phone. The original note stands as written: not only from the
   library and the overview card menu. The cues are for the moment the bar is in
   front of you, and today reaching them mid-workout means backing out to the
   overview and opening a menu. **It must not be always visible**: the exercise
@@ -2131,16 +2337,20 @@ the next - screenshot before every tap.
   the guidance in an `ActionSheet`, or the guidance as a card at the end of the
   history scroller. The sheet is the safer of the two, because it costs the
   layout no height at all.
-- **Home is unreachable while a workout is live**, and `Exercises` and
-  `Settings` both live on Home, so neither can be opened mid-workout. Found
-  while verifying stage 15.
+- ~~**Home is unreachable while a workout is live**~~ **Built in stage 17**:
+  Home is a pushed screen now, reached from the overview's docked action row,
+  and `Settings` was opened mid-workout on the phone. A template preview reached
+  that way refuses to start a second session. Found while verifying stage 15.
 
-- Progression cue is currently advisory text only, in the workout and now on
-  Home. It could pre-fill the next session's weight, which is the natural payoff
-  of `shouldIncreaseLoad` and the obvious next step from the readiness list.
-- Progress and **trends over time**. Stage 11c reads the five years back as
-  totals and as a list, and stage 12 gives one exercise its full history, but
-  nothing charts anything or compares a period against an earlier one.
+- ~~Progression cue is advisory text only.~~ **Built in stage 18**: it pre-fills
+  the next session's weight, which was the natural payoff of
+  `shouldIncreaseLoad`. Home's readiness list stays text, deliberately - it says
+  what to think about before leaving the house, and the bar is where the number
+  is applied.
+- ~~Progress and **trends over time**.~~ **Half built in stage 20**: one
+  exercise's best set is charted on its detail screen, verified on device. Nothing compares a period
+  against an earlier one, and Home carries no trend tile - both were left out of
+  that stage deliberately.
 - ~~`npm run dev` runs against an empty jeep-sqlite database.~~ **Done.**
   `src/db/devSeed.ts` writes fabricated sessions into an empty web database on
   first load. Three guards keep it away from real data: **web only** and **dev
