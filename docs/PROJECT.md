@@ -5,7 +5,8 @@ fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
 Last updated: 2026-08-26 (stages 17 to 20 verified on device: mid-workout
-reachability, progression prefill, the assisted split, trends)
+reachability, progression prefill, the assisted split, trends. Demoing to other
+people starts the week of 2026-08-31, which reorders what comes next.)
 
 ---
 
@@ -2322,6 +2323,43 @@ the next - screenshot before every tap.
     change, and stages 17 to 20 are all repo changes waiting on one device
     session.
 
+### Demoing to other people, from the week of 2026-08-31
+
+Stated by the user on 2026-08-26. This is a different goal from the cutover and
+it reorders the work: the cutover makes the app the user's own logger, and a
+demo makes it something a stranger holds. **The two want opposite things from
+the database.**
+
+22. **A demo database, and it is the blocking one.** `sets.notes` carries the
+    medical notes and the named third party out of `Set Comment`, and the phone
+    that would be demoed holds the real export. A session summary or an exercise
+    history is one tap from showing them. `db/devSeed.ts` already fabricates
+    history for `npm run dev` and is fenced to web and dev, so the work is to
+    produce a **device-installable fabricated database** from the same seed:
+    five years deep, exercise names from the committed `plan.ts`, no row derived
+    from `Examples/`. It is also repeatable, which a demo wants anyway - the
+    same numbers on stage every time.
+23. **Home carries no trend.** The chart is one screen deep in exercise detail,
+    and Home is the first thing anyone sees. A volume-per-week sparkline and a
+    period-over-period line reuse the series primitive from stage 20 and the SQL
+    rollup shape from stage 11c. Highest visible payoff per hour of anything
+    below.
+24. **Two blemishes measured on the phone on 2026-08-26**, both on screen during
+    a demo. `Chest Dip` renders `BEST -`, because bodyweight work has no weight
+    to be best at and the tile does not branch the way the chart already does;
+    it should read most reps. And Home said `last done 2026-08-26` for a session
+    that was still in progress, so an unfinished workout counts as a finished
+    one in `nextTemplate`.
+25. **A best set per exercise, with its date.** The first question an audience
+    asks a lifting app. It is deliberately **not** an e1RM or a strength score:
+    Epley is wrong at 1 rep (141 rows), unreliable above 10 (844), incoherent
+    for duration and distance, and inverts for assistance. A best set branching
+    on `tracking_type` is honest and is already half-built - `exerciseStats`
+    returns `bestWeightKg` and `leastAssistKg` today.
+
+Order: 22, then 23, then 24. 25 only if the week allows. The cutover is
+unaffected and stays a separate decision.
+
 ### Not blocking cutover
 
 - ~~**Guidance has to be reachable from the logging screen**~~ **Built in stage
@@ -2431,12 +2469,92 @@ the next - screenshot before every tap.
   ~10 reps (844 rows), and is incoherent for duration/distance work. PR
   detection branches per `tracking_type` and inverts for `assistance`.
 
+### Ideas, unevaluated
+
+Brainstormed on 2026-08-26 at the user's request. **None of this is a plan and
+none of it is measured** - it is written down so it stops being re-derived, and
+anything promoted out of here needs the same evidence everything above got. The
+notes say what each one would cost or collide with, where that is known.
+
+**Uses a column that already exists**
+
+- **Warm-up sets.** `set_type` is on every row and is `'unknown'` for all 6,206,
+  because the export has no such column. A toggle in the entry bar would give it
+  a writer, and warm-ups would then have to leave `sessionTotals`,
+  `shouldIncreaseLoad` and the history cards, which is the whole reason it is
+  not a one-line change.
+- **RPE.** Parsed at import and stored, read by nothing. It is the natural input
+  to any auto-regulation, and the natural first thing to clutter the two-tap
+  loop with, so it would have to earn its place in the entry bar.
+- **Notes from inside the app.** `sessions.notes` and `sets.notes` have no
+  writer in the UI at all. Note that this is the column carrying the medical
+  history, so a demo build and a notes editor pull in opposite directions.
+- **Per-exercise unit.** `preferred_unit` is read and never editable.
+
+**The logging loop**
+
+- **Repeat last session**, filling every exercise's target from what was
+  performed rather than one exercise at a time.
+- **A plate calculator screen.** `platesFor` answers "what goes on the bar" for
+  the weight in the entry bar; asking it about an arbitrary target is a
+  different question and a small screen.
+- **Rest presets and per-exercise auto-start**, rather than one global rest and
+  one behaviour.
+- **Supersets as a visible thing.** `order_index` already interleaves them
+  truthfully and 12 imported sessions contain them; nothing in the UI says so.
+- **An exercise added by hand never completes**, because it carries no rep
+  target, so auto-advance keeps returning to it. Recorded in stage 9 and still
+  true.
+
+**The programme**
+
+- **More than one programme**, with mesocycles and deloads. Templates are two
+  rows today and the editor assumes that.
+- **Progression rules per exercise.** One rule is encoded for everything: top of
+  the range on every set. Double progression, linear, and rep-goal schemes are
+  all different functions over the same rows.
+- **Stall detection.** An exercise that has not moved in N sessions is the thing
+  a coach would notice and the app currently cannot say.
+- **A calendar view**, which is the one view of five years the app does not have.
+
+**Insight**
+
+- **Volume by muscle group over time**, extending the 28-day bar on Home into a
+  trend. The muscle map is already 84 of 88 exercises.
+- **Consistency by week**, which the cadence line states as a number and never
+  draws.
+- **Session-over-session deltas on the summary**: volume, sets and top set
+  against the last time that template was performed.
+
+**Platform**
+
+- **A home-screen widget** saying what is next up, which is the one thing Home
+  answers and the only thing wanted before leaving the house.
+- **Actions on the rest notification** - skip, add 30 seconds - so the phone
+  need not be unlocked mid-rest.
+- **Restore from a synced copy, inside the app.** Export is built and proved
+  against an uninstall; the way back is currently `adb`.
+- **A light theme.** The palette was sampled from a dark reference app, and a
+  bright room is exactly where a demo happens.
+- **An accessibility pass.** The colour rail is already paired with the group's
+  name, which was chosen partly for this; nothing else has been checked.
+
+**Data**
+
+- **CSV export**, not only a database copy, so the history outlives this app.
+- **Strava import** into `external_activities`, which the schema has and nothing
+  fills.
+
 ### Data safety
 
 - `Examples/` and `/db/` are gitignored. `Examples/` holds the **only copy** of
   the source export and contains medical notes and a named third party. A
   narrower pattern than `/db/` previously let `loadout.sqlite-shm` through -
   verify with `git check-ignore -v` after touching ignore rules.
+- **Do not demo the app on the real database.** `sets.notes` carries those
+  medical notes onto the phone, and a session summary or an exercise history
+  reaches them in one tap in front of whoever is watching. The fabricated demo
+  database is stage 22 above and it blocks demoing, not the other way round.
 - Migrations are numbered and never edited once applied. **Both runners take a
   copy first**: `scripts/migrate.ts` copies the file on the laptop, and
   `src/db/backup.ts` runs `VACUUM INTO` on device before `open.ts` applies
