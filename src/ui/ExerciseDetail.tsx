@@ -13,12 +13,19 @@
  * single "best" would read backwards for 420 sets of the imported history.
  */
 import { useState } from 'react'
-import { useExerciseDetail, useExerciseHistory, useExerciseStats } from '../state/queries.ts'
+import {
+  useExerciseDetail,
+  useExerciseHistory,
+  useExerciseSessions,
+  useExerciseStats,
+} from '../state/queries.ts'
 import { localDateOf } from '../db/repo.ts'
 import { compactWeight, formatWeight, type Unit } from '../logic/units.ts'
+import { CueList } from './CueList.tsx'
 import { GroupRail, GroupWord } from './GroupTag.tsx'
 import { HistoryCard } from './HistoryCard.tsx'
 import { Stat } from './Stat.tsx'
+import { TrendChart } from './TrendChart.tsx'
 
 /** Sessions per page. `Load more` adds another page of whole sessions. */
 const PAGE = 10
@@ -28,6 +35,10 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
   const { data: exercise } = useExerciseDetail(exerciseId)
   const { data: stats } = useExerciseStats(exerciseId)
   const { data: history, isFetching } = useExerciseHistory(exerciseId, sessions)
+  // Every session at once, oldest first. It is one statement over a few hundred
+  // rows for the whole five years, which is cheaper than the paged history the
+  // list below it reads.
+  const { data: trend } = useExerciseSessions(exerciseId)
   const today = localDateOf()
 
   if (!exercise) {
@@ -35,7 +46,6 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
   }
 
   const unit: Unit = exercise.preferredUnit ?? 'lb'
-  const cues = (exercise.guidance ?? '').split('\n').filter((line) => line.trim().length > 0)
   const assisted = exercise.loadMode === 'assistance'
   const best = assisted ? stats?.leastAssistKg : stats?.bestWeightKg
 
@@ -75,24 +85,23 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
         </p>
       )}
 
+      {/* Above the cues and the session list, because it answers the question
+          the screen is opened with: which way is this going. It renders nothing
+          at all for an exercise with no plottable session. */}
+      <section className="mt-6">
+        <TrendChart
+          sessions={trend}
+          trackingType={exercise.trackingType}
+          loadMode={exercise.loadMode}
+          unit={unit}
+        />
+      </section>
+
       <section className="mt-6">
         <h3 className="text-text-dim text-xs tracking-wide uppercase">How to do it</h3>
-        {cues.length > 0 ? (
-          <ul className="mt-2 flex flex-col gap-2">
-            {cues.map((cue) => (
-              <li key={cue} className="flex gap-2 text-sm">
-                <span className="text-text-dim" aria-hidden="true">
-                  ·
-                </span>
-                <span>{cue}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          // Only the programme's own exercises are authored. The rest say so
-          // rather than showing an empty heading.
-          <p className="text-text-dim mt-2 text-sm">No guidance yet.</p>
-        )}
+        {/* Only the programme's own exercises are authored, so the empty case
+            says so rather than leaving a heading over nothing. */}
+        <CueList guidance={exercise.guidance} />
       </section>
 
       <section className="mt-6">

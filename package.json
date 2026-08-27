@@ -28,6 +28,7 @@
     "jeep-sqlite": "^2.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3",
     "zustand": "^5.0.14"
   },

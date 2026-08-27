@@ -40,6 +40,7 @@ import {
   templatePlan,
   exerciseDetail,
   exerciseHistory,
+  exerciseSessions,
   exerciseStats,
   endSession,
   historyStats,
@@ -182,6 +183,15 @@ export function useExerciseStats(exerciseId: number | null | undefined) {
     queryKey: [...keys.exercise(exerciseId ?? -1), 'stats'] as const,
     enabled: exerciseId != null,
     queryFn: async () => exerciseStats(await getDb(), exerciseId!),
+  })
+}
+
+/** Every session of one exercise, oldest first: what the trend chart draws. */
+export function useExerciseSessions(exerciseId: number | null | undefined) {
+  return useQuery({
+    queryKey: [...keys.exercise(exerciseId ?? -1), 'sessions'] as const,
+    enabled: exerciseId != null,
+    queryFn: async () => exerciseSessions(await getDb(), exerciseId!),
   })
 }
 
