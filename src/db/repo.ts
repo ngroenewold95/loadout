@@ -706,6 +706,27 @@ export function sessionById(db: Db, sessionId: number): Promise<SessionRow | nul
   )
 }
 
+/**
+ * A note on the workout itself.
+ *
+ * `sessions.notes` has existed since the first migration and the import fills
+ * it, but nothing in the app has ever written it. An empty string is stored as
+ * NULL: a note nobody typed and a note somebody cleared are the same thing, and
+ * two ways to say "no note" would be two things every reader has to handle.
+ */
+export async function setSessionNotes(
+  db: Db,
+  sessionId: number,
+  notes: string | null,
+): Promise<void> {
+  const trimmed = notes?.trim()
+  await db.exec(
+    `UPDATE sessions SET notes = ?, updated_at = ?
+      WHERE id = ? AND deleted_at IS NULL`,
+    [trimmed ? trimmed : null, Date.now(), sessionId],
+  )
+}
+
 export interface StartSessionInput {
   name?: string | null
   templateId?: number | null
@@ -1553,6 +1574,83 @@ export function historyStats(
   )
 }
 
+export interface PreviousSessionTotals {
+  sessionId: number
+  localDate: string
+  sets: number
+  reps: number
+  volumeKg: number | null
+}
+
+/**
+ * The last time this workout was performed before the one being looked at.
+ *
+ * "This workout" is the template link OR the name, the same pair `listTemplates`
+ * matches on: the imported history predates templates entirely and carries only
+ * a name, so a template-only match would find nothing for five years of it.
+ *
+ * Returns null when there is no earlier one, which is the first performance of a
+ * template and is a real answer rather than a failure.
+ */
+export function previousSessionTotals(
+  db: Db,
+  sessionId: number,
+): Promise<PreviousSessionTotals | null> {
+  return db.queryOne<PreviousSessionTotals>(
+    `SELECT ses.id AS "sessionId",
+            ses.local_date AS "localDate",
+            COUNT(s.id) AS "sets",
+            COALESCE(SUM(s.reps), 0) AS "reps",
+            ${VOLUME_KG} AS "volumeKg"
+       FROM sessions ses
+       LEFT JOIN sets s ON s.session_id = ses.id AND s.deleted_at IS NULL
+      WHERE ${FINISHED}
+        AND ses.id != ?
+        AND ses.started_at_utc < (SELECT started_at_utc FROM sessions WHERE id = ?)
+        AND (ses.template_id = (SELECT template_id FROM sessions WHERE id = ?)
+             OR ses.name = (SELECT name FROM sessions WHERE id = ?))
+      GROUP BY ses.id
+      ORDER BY ses.started_at_utc DESC, ses.id DESC
+      LIMIT 1`,
+    [sessionId, sessionId, sessionId, sessionId],
+  )
+}
+
+export interface SessionVolumeRow {
+  sessionId: number
+  localDate: string
+  volumeKg: number | null
+  setCount: number
+}
+
+/**
+ * One row per finished session since a date, with what it came to.
+ *
+ * The bucketing into weeks is deliberately NOT done here. `local_date` is a
+ * string and this file already says why date arithmetic belongs where there is
+ * a calendar: SQLite's `date(..., 'weekday 0')` would be a second, differently
+ * written definition of a training week, and `logic/dates.ts` already owns the
+ * Monday rule that Home's cadence line uses.
+ *
+ * A window of a few months is a few dozen rows, so this is cheaper than the
+ * code to avoid reading them would be.
+ */
+export function sessionVolumes(db: Db, since: string): Promise<SessionVolumeRow[]> {
+  return db.query<SessionVolumeRow>(
+    `SELECT ses.id AS "sessionId",
+            ses.local_date AS "localDate",
+            ${VOLUME_KG} AS "volumeKg",
+            COUNT(s.id) AS "setCount"
+       FROM sessions ses
+       LEFT JOIN sets s ON s.session_id = ses.id AND s.deleted_at IS NULL
+      WHERE ${FINISHED}
+        AND ses.local_date >= ?
+      GROUP BY ses.id
+      ORDER BY ses.local_date`,
+    [since],
+  )
+}
+
 export interface MuscleSetCount {
   /** Free text straight from the column, including null - see `muscleMark`. */
   muscle: string | null
@@ -1583,6 +1681,37 @@ export function setsByMuscle(db: Db, since: string): Promise<MuscleSetCount[]> {
         AND ses.local_date >= ?
       GROUP BY e.primary_muscle
       ORDER BY "sets" DESC`,
+    [since],
+  )
+}
+
+export interface MuscleDayCount extends MuscleSetCount {
+  localDate: string
+}
+
+/**
+ * The same count, kept per day so it can be rolled into weeks.
+ *
+ * **Sets, not volume, for the reason `setsByMuscle` gives**: the groups are
+ * loaded in completely different ranges, so a leg day would outweigh everything
+ * else on volume and say nothing about where the work went. The weeks are
+ * assembled in `logic/volume.ts`, where `startOfWeek` already owns the Monday
+ * rule the rest of Home uses.
+ */
+export function setsByMuscleDay(db: Db, since: string): Promise<MuscleDayCount[]> {
+  return db.query<MuscleDayCount>(
+    `SELECT ses.local_date AS "localDate",
+            e.primary_muscle AS "muscle",
+            COUNT(*) AS "sets"
+       FROM sets s
+       JOIN sessions ses ON ses.id = s.session_id
+       JOIN exercises e ON e.id = s.exercise_id
+      WHERE s.deleted_at IS NULL
+        AND e.deleted_at IS NULL
+        AND ${FINISHED}
+        AND ses.local_date >= ?
+      GROUP BY ses.local_date, e.primary_muscle
+      ORDER BY ses.local_date`,
     [since],
   )
 }

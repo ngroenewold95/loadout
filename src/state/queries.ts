@@ -53,10 +53,14 @@ import {
   listTemplates,
   logSet,
   nextTemplate,
+  previousSessionTotals,
   searchExercises,
   sessionById,
   setPlannedSets,
+  setSessionNotes,
+  sessionVolumes,
   setsByMuscle,
+  setsByMuscleDay,
   startSession,
   updateSet,
   type ExercisePlanPatch,
@@ -234,6 +238,38 @@ export function useSessionExercises(sessionId: number | null | undefined) {
   })
 }
 
+/**
+ * What the last performance of this same workout came to.
+ *
+ * Keyed on the session being viewed rather than on the template, because the
+ * answer for a session read out of the history is the one that came before
+ * IT - not the one before today's.
+ */
+export function usePreviousSessionTotals(sessionId: number | null | undefined) {
+  return useQuery({
+    queryKey: [...keys.session(sessionId ?? -1), 'previous'] as const,
+    enabled: sessionId != null,
+    queryFn: async () => previousSessionTotals(await getDb(), sessionId!),
+  })
+}
+
+/**
+ * Write the workout's own note.
+ *
+ * Invalidates the session rather than the whole history: the note shows on the
+ * summary and nowhere else, and the history rows do not read it.
+ */
+export function useSetSessionNotes(sessionId: number) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async (notes: string | null) =>
+      setSessionNotes(await getDb(), sessionId, notes),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.session(sessionId) })
+    },
+  })
+}
+
 export function useSessionSets(sessionId: number | null | undefined) {
   return useQuery({
     queryKey: keys.sessionSets(sessionId ?? -1),
@@ -286,6 +322,31 @@ export function useHistoryStats() {
         weekStart: startOfWeek(today),
         fourWeeksAgo: daysAgo(today, 27),
       }),
+  })
+}
+
+/**
+ * Volume per session since a date, for Home's trend.
+ *
+ * One window covers both the sparkline and the period comparison: the weeks
+ * drawn are the shorter of the two, so asking for the longer window once is
+ * cheaper than two reads of the same table and cannot show two different
+ * pictures of the same fortnight.
+ */
+export function useSessionVolumes(days: number) {
+  const since = daysAgo(localDateOf(), days - 1)
+  return useQuery({
+    queryKey: [...keys.history, 'volumes', since] as const,
+    queryFn: async () => sessionVolumes(await getDb(), since),
+  })
+}
+
+/** The same counts kept per day, for the week-by-week bars under it. */
+export function useSetsByMuscleDay(days: number) {
+  const since = daysAgo(localDateOf(), days - 1)
+  return useQuery({
+    queryKey: [...keys.history, 'musclesByDay', since] as const,
+    queryFn: async () => setsByMuscleDay(await getDb(), since),
   })
 }
 

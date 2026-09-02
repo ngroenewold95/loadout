@@ -31,6 +31,7 @@ import {
   historyStats,
   recentPerformance,
   setsByMuscle,
+  setsByMuscleDay,
   updateSet,
   listSessionExercises,
   listSessionHistory,
@@ -41,8 +42,12 @@ import {
   logSet,
   nextTemplate,
   prefillFor,
+  previousSessionTotals,
   searchExercises,
+  sessionById,
+  sessionVolumes,
   setPlannedSets,
+  setSessionNotes,
   startSession,
   undoLastSet,
 } from './repo.ts'
@@ -205,6 +210,17 @@ describe('sessions', () => {
   it('refuses a second session while one is in progress', async () => {
     await startSession(db, { name: 'Day 1' })
     await expect(startSession(db, { name: 'Day 2' })).rejects.toThrow('still in progress')
+  })
+
+  it('writes and clears the workout note, storing blank as null', async () => {
+    const id = await startSession(db, { name: 'Day 1' })
+
+    await setSessionNotes(db, id, '  shoulder felt fine  ')
+    expect((await sessionById(db, id))?.notes).toBe('shoulder felt fine')
+
+    // A note nobody typed and a note somebody cleared are the same thing.
+    await setSessionNotes(db, id, '   ')
+    expect((await sessionById(db, id))?.notes).toBeNull()
   })
 
   it('discards a session and its sets together', async () => {
@@ -880,6 +896,70 @@ describe('templates and picker', () => {
     expect(stats?.trainedMs).toBe(3 * 3_600_000)
   })
 
+  it('finds the previous performance of the same workout, by template or by name', async () => {
+    const squat = await seedExercise('Squat')
+    const now = Date.now()
+    const { lastInsertId: templateId } = await db.exec(
+      'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, 0, ?, ?)',
+      ['Day 1', now, now],
+    )
+    // Imported history: the name only, no template link.
+    await seedHistory(squat, '2026-06-01', [{ weightKg: 100, reps: 5 }], 'Day 1')
+    const middle = await seedHistory(squat, '2026-07-01', [{ weightKg: 100, reps: 8 }], 'Day 1')
+    const latest = await seedHistory(
+      squat,
+      '2026-07-15',
+      [
+        { weightKg: 100, reps: 5 },
+        { weightKg: 100, reps: 5 },
+      ],
+      'Day 1',
+    )
+    await db.exec('UPDATE sessions SET template_id = ? WHERE id = ?', [templateId, latest])
+    // A different workout entirely, which must not be the answer.
+    await seedHistory(squat, '2026-07-10', [{ weightKg: 200, reps: 5 }], 'Day 2')
+
+    expect(await previousSessionTotals(db, latest)).toEqual({
+      sessionId: middle,
+      localDate: '2026-07-01',
+      sets: 1,
+      reps: 8,
+      volumeKg: 800,
+    })
+
+    // The first performance of a workout has nothing before it, and that is an
+    // answer rather than a failure.
+    const first = await db.queryOne<{ id: number }>(
+      "SELECT id FROM sessions WHERE local_date = '2026-06-01'",
+    )
+    expect(await previousSessionTotals(db, first!.id)).toBeNull()
+  })
+
+  it('reports one volume row per finished session since a date', async () => {
+    const squat = await seedExercise('Squat')
+    const chinup = await seedExercise('Assisted Chinup', { loadMode: 'assistance' })
+    await seedHistory(squat, '2026-06-01', [{ weightKg: 100, reps: 5 }])
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+    // Assistance is work but not load, so it counts as a session with no volume
+    // - the same rule the tiles and the share text apply.
+    await seedHistory(chinup, '2026-07-20', [
+      { weightKg: 20, reps: 5, loadMode: 'assistance' },
+    ])
+    // In progress, so not history yet.
+    await startSession(db, { name: 'Day 1' })
+
+    const rows = await sessionVolumes(db, '2026-07-01')
+    expect(rows.map((r) => [r.localDate, r.volumeKg, r.setCount])).toEqual([
+      ['2026-07-15', 1000, 2],
+      ['2026-07-20', 0, 1],
+    ])
+    // Carries its own id, so a day on the calendar can open its workout.
+    expect(rows.every((r) => r.sessionId > 0)).toBe(true)
+  })
+
   it('counts sets per muscle group, keeping the unclassified separate', async () => {
     const squat = await seedExercise('Squat')
     const bike = await seedExercise('Bike')
@@ -896,6 +976,22 @@ describe('templates and picker', () => {
     ])
     // The window is a filter, not a suggestion.
     expect(await setsByMuscle(db, '2026-08-01')).toEqual([])
+  })
+
+  it('counts sets per muscle per day, keeping the unclassified separate', async () => {
+    const squat = await seedExercise('Squat')
+    const bike = await seedExercise('Bike')
+    await db.exec('UPDATE exercises SET primary_muscle = ? WHERE id = ?', ['legs', squat])
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+    await seedHistory(bike, '2026-07-16', [{ weightKg: null, reps: 20 }])
+
+    expect(await setsByMuscleDay(db, '2026-07-01')).toEqual([
+      { localDate: '2026-07-15', muscle: 'legs', sets: 2 },
+      { localDate: '2026-07-16', muscle: null, sets: 1 },
+    ])
   })
 
   it('orders the picker by most recently performed, then name', async () => {
