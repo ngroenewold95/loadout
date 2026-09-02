@@ -20,6 +20,8 @@ import {
   useExerciseStats,
 } from '../state/queries.ts'
 import { localDateOf } from '../db/repo.ts'
+import { formatDuration } from '../logic/entry.ts'
+import { bestOf, trendSeries, type BestPoint } from '../logic/trend.ts'
 import { compactWeight, formatWeight, type Unit } from '../logic/units.ts'
 import { CueList } from './CueList.tsx'
 import { GroupRail, GroupWord } from './GroupTag.tsx'
@@ -29,6 +31,31 @@ import { TrendChart } from './TrendChart.tsx'
 
 /** Sessions per page. `Load more` adds another page of whole sessions. */
 const PAGE = 10
+
+/** Weight and assistance are the two measures the tile's `unit` applies to. */
+function isWeight(best: BestPoint): boolean {
+  return best.measure === 'weight' || best.measure === 'assistance'
+}
+
+/**
+ * The best set as one short string.
+ *
+ * Reps and distance carry their word here rather than through `Stat`'s `unit`,
+ * which is a weight unit and only ever kg or lb.
+ */
+function bestValue(best: BestPoint, unit: Unit): string {
+  switch (best.measure) {
+    case 'weight':
+    case 'assistance':
+      return formatWeight(best.value, unit)
+    case 'duration':
+      return formatDuration(best.value)
+    case 'distance':
+      return `${Math.round(best.value) / 1000} km`
+    default:
+      return String(best.value)
+  }
+}
 
 export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
   const [sessions, setSessions] = useState(PAGE)
@@ -46,8 +73,14 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
   }
 
   const unit: Unit = exercise.preferredUnit ?? 'lb'
-  const assisted = exercise.loadMode === 'assistance'
-  const best = assisted ? stats?.leastAssistKg : stats?.bestWeightKg
+
+  /**
+   * The best set comes out of the same series the chart draws, not out of a
+   * second query with its own opinion. `trendSeries` is pure and already
+   * decides which number this exercise is judged by, so calling it twice on the
+   * same rows costs nothing and cannot disagree with the chart below.
+   */
+  const best = bestOf(trendSeries(trend ?? [], exercise.trackingType, exercise.loadMode))
 
   return (
     <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto px-5 pt-1">
@@ -63,11 +96,12 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
         <Stat label="Sets" value={String(stats?.totalSets ?? 0)} />
         <Stat label="Sessions" value={String(stats?.sessionCount ?? 0)} />
         <Stat
-          // The label carries the inversion, so the number never has to be
-          // read against the wrong idea of better.
-          label={assisted ? 'Least assist' : 'Best'}
-          value={best != null ? formatWeight(best, unit) : '-'}
-          unit={best != null ? unit : undefined}
+          // The label carries the inversion and the measure, so the number
+          // never has to be read against the wrong idea of better.
+          label={best?.label ?? 'Best'}
+          value={best ? bestValue(best, unit) : '-'}
+          unit={best && isWeight(best) ? unit : undefined}
+          sub={best?.localDate}
         />
       </div>
 
@@ -77,7 +111,10 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
             stats.firstDate && stats.lastDate
               ? `${stats.firstDate} to ${stats.lastDate}`
               : null,
-            stats.bestReps != null ? `most reps ${stats.bestReps}` : null,
+            // Not repeated when the tile above IS the rep count.
+            stats.bestReps != null && best?.measure !== 'reps'
+              ? `most reps ${stats.bestReps}`
+              : null,
             stats.volumeKg ? `${compactWeight(stats.volumeKg, unit)} ${unit} lifted` : null,
           ]
             .filter(Boolean)

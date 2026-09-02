@@ -132,3 +132,53 @@ function seriesShape(
       }
   }
 }
+
+/** The best point of a series, with the date it was performed. */
+export interface BestPoint extends TrendPoint {
+  /** Carried through so the caller formats the number without re-deciding. */
+  measure: TrendSeries['measure']
+  /** Short enough for a stat tile: `Best`, `Most reps`, `Least assist`. */
+  label: string
+}
+
+/**
+ * Short labels, for the tile. `TrendSeries.label` is a heading over a chart and
+ * says `Heaviest set`; a three-across tile has room for one word.
+ */
+const TILE_LABEL: Record<TrendSeries['measure'], string> = {
+  weight: 'Best',
+  assistance: 'Least assist',
+  reps: 'Most reps',
+  duration: 'Longest',
+  distance: 'Furthest',
+}
+
+/**
+ * The best set ever performed, out of the same series the chart draws.
+ *
+ * No new query and no second opinion about what "best" means: the series
+ * already picked the measure this exercise is judged by, and the best point is
+ * the highest of it - or the LOWEST where `lowerIsBetter`, which is assistance
+ * and only assistance.
+ *
+ * **This is what stops a bodyweight exercise reading `BEST -`.** `Chest Dip`
+ * has no weight to be best at, so its series is reps and its best set is a rep
+ * count. The screen used to ask the repo for a heaviest weight, get null, and
+ * print a dash over five years of work.
+ *
+ * Ties go to the EARLIEST session, so the date answers "when was this first
+ * reached" rather than "when was it last repeated".
+ */
+export function bestOf(series: TrendSeries): BestPoint | null {
+  let best: TrendPoint | null = null
+  for (const point of series.points) {
+    if (best == null) {
+      best = point
+      continue
+    }
+    const better = series.lowerIsBetter ? point.value < best.value : point.value > best.value
+    if (better) best = point
+  }
+  if (best == null) return null
+  return { ...best, measure: series.measure, label: TILE_LABEL[series.measure] }
+}

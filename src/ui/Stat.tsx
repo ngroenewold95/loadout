@@ -12,9 +12,11 @@ interface Props {
   label: string
   value: string
   unit?: Unit
+  /** A small line under the number - a date, or what it is being compared to. */
+  sub?: string
 }
 
-export function Stat({ label, value, unit }: Props) {
+export function Stat({ label, value, unit, sub }: Props) {
   return (
     <div className="bg-surface-1 rounded-xl px-3 py-3">
       <p className="text-text-dim text-xs tracking-wide uppercase">{label}</p>
@@ -22,6 +24,7 @@ export function Stat({ label, value, unit }: Props) {
         {value}
         {unit && <span className="text-text-dim ml-1 text-sm font-normal">{unit}</span>}
       </p>
+      {sub && <p className="text-text-dim mt-0.5 text-xs">{sub}</p>}
     </div>
   )
 }

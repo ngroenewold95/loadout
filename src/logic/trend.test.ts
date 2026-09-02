@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { trendSeries, type SessionCandidate } from './trend.ts'
+import { bestOf, trendSeries, type SessionCandidate } from './trend.ts'
 
 const empty: Omit<SessionCandidate, 'localDate'> = {
   bestWeightKg: null,
@@ -101,5 +101,79 @@ describe('trendSeries', () => {
       'total',
     )
     expect(series.points).toEqual([{ localDate: '2026-08-10', value: 60 }])
+  })
+})
+
+describe('bestOf', () => {
+  const bestFor = (
+    sessions: SessionCandidate[],
+    trackingType: Parameters<typeof trendSeries>[1],
+    loadMode: string,
+  ) => bestOf(trendSeries(sessions, trackingType, loadMode))
+
+  it('takes the heaviest set of ordinary weight work, with its date', () => {
+    const best = bestFor(
+      [
+        on('2026-06-24', { bestWeightKg: 160 }),
+        on('2026-08-10', { bestWeightKg: 165 }),
+        on('2026-08-24', { bestWeightKg: 162.5 }),
+      ],
+      'weight_reps',
+      'total',
+    )
+    expect(best).toMatchObject({ value: 165, localDate: '2026-08-10', measure: 'weight' })
+    expect(best?.label).toBe('Best')
+  })
+
+  /** The inversion, again: least assistance is the best set, not most. */
+  it('takes the LEAST assistance for an assisted exercise', () => {
+    const best = bestFor(
+      [
+        on('2026-06-24', { leastAssistKg: 30 }),
+        on('2026-08-10', { leastAssistKg: 20 }),
+        on('2026-08-24', { leastAssistKg: 25 }),
+      ],
+      'bodyweight',
+      'assistance',
+    )
+    expect(best).toMatchObject({ value: 20, localDate: '2026-08-10', measure: 'assistance' })
+    expect(best?.label).toBe('Least assist')
+  })
+
+  /**
+   * The blemish this exists to remove: `Chest Dip` carries no weight on a
+   * bodyweight day, and the screen printed a dash over five years of sets.
+   */
+  it('takes the most reps when bodyweight work carries no weight at all', () => {
+    const best = bestFor(
+      [on('2026-06-24', { bestReps: 8 }), on('2026-08-10', { bestReps: 12 })],
+      'bodyweight',
+      'total',
+    )
+    expect(best).toMatchObject({ value: 12, localDate: '2026-08-10', measure: 'reps' })
+    expect(best?.label).toBe('Most reps')
+  })
+
+  it('takes the longest set of duration work', () => {
+    const best = bestFor(
+      [on('2026-06-24', { bestDurationS: 45 }), on('2026-08-10', { bestDurationS: 60 })],
+      'duration',
+      'total',
+    )
+    expect(best).toMatchObject({ value: 60, localDate: '2026-08-10', measure: 'duration' })
+  })
+
+  /** The date should say when it was first reached, not last repeated. */
+  it('breaks a tie on the earliest session', () => {
+    const best = bestFor(
+      [on('2026-06-24', { bestWeightKg: 165 }), on('2026-08-10', { bestWeightKg: 165 })],
+      'weight_reps',
+      'total',
+    )
+    expect(best?.localDate).toBe('2026-06-24')
+  })
+
+  it('is null when nothing is plottable', () => {
+    expect(bestFor([on('2026-06-24', {})], 'weight_reps', 'total')).toBeNull()
   })
 })
