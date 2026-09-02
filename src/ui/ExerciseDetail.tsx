@@ -21,7 +21,7 @@ import {
 } from '../state/queries.ts'
 import { localDateOf } from '../db/repo.ts'
 import { formatDuration } from '../logic/entry.ts'
-import { bestOf, trendSeries, type BestPoint } from '../logic/trend.ts'
+import { bestOf, stallOf, trendSeries, type BestPoint } from '../logic/trend.ts'
 import { compactWeight, formatWeight, type Unit } from '../logic/units.ts'
 import { CueList } from './CueList.tsx'
 import { GroupRail, GroupWord } from './GroupTag.tsx'
@@ -80,7 +80,11 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
    * decides which number this exercise is judged by, so calling it twice on the
    * same rows costs nothing and cannot disagree with the chart below.
    */
-  const best = bestOf(trendSeries(trend ?? [], exercise.trackingType, exercise.loadMode))
+  const series = trendSeries(trend ?? [], exercise.trackingType, exercise.loadMode)
+  const best = bestOf(series)
+  // Same series again, and for the same reason: one definition of "better" in
+  // the app rather than one per screen. The assistance inversion comes with it.
+  const stall = stallOf(series)
 
   return (
     <div className="pb-safe-b min-h-0 flex-1 overflow-y-auto px-5 pt-1">
@@ -119,6 +123,16 @@ export function ExerciseDetail({ exerciseId }: { exerciseId: number }) {
           ]
             .filter(Boolean)
             .join(' · ')}
+        </p>
+      )}
+
+      {/* The thing a coach would notice and the app could not say. It sits
+          directly under the tiles because it is about the number in the one
+          beside it: the best set, and how long it has stood. Nothing renders
+          while the line is still going up. */}
+      {stall && (
+        <p className="mt-3 rounded-xl bg-amber-950 px-3 py-2 text-sm text-amber-300">
+          No new best in {stall.sessions} sessions, since {stall.since}.
         </p>
       )}
 

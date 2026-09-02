@@ -1416,6 +1416,66 @@ export function exerciseSessions(
   )
 }
 
+/**
+ * The same per-session candidates, for several exercises in one statement.
+ *
+ * Home asks whether anything in the next workout has stalled, which is a
+ * question about ten exercises at once. Ten calls to `exerciseSessions` would
+ * be ten bridge crossings on device, which is the rule this file exists to
+ * enforce, so the limit is applied per exercise with `DENSE_RANK` over a
+ * partition - the same window function `recentPerformance` uses and the same
+ * one `DbSmoke` proved the device's SQLite has.
+ *
+ * `ROW_NUMBER` would be wrong here: the rank is over whole sessions, and two
+ * sessions can share a `local_date`, so ranking rows rather than sessions would
+ * cut one of them in half.
+ */
+export async function exerciseSessionsFor(
+  db: Db,
+  exerciseIds: number[],
+  limit = 200,
+): Promise<Map<number, ExerciseSessionRow[]>> {
+  if (exerciseIds.length === 0) return new Map()
+
+  const rows = await db.query<ExerciseSessionRow & { exerciseId: number }>(
+    `SELECT * FROM (
+       SELECT s.exercise_id AS "exerciseId",
+              ses.id AS "sessionId",
+              ses.local_date AS "localDate",
+              MAX(CASE WHEN s.load_mode = 'assistance' THEN NULL ELSE s.weight_kg END)
+                AS "bestWeightKg",
+              MIN(CASE WHEN s.load_mode = 'assistance' THEN s.weight_kg END)
+                AS "leastAssistKg",
+              MAX(s.reps) AS "bestReps",
+              MAX(s.duration_s) AS "bestDurationS",
+              MAX(s.distance_m) AS "bestDistanceM",
+              COUNT(s.id) AS "setCount",
+              DENSE_RANK() OVER (
+                PARTITION BY s.exercise_id
+                ORDER BY ses.local_date DESC, ses.id DESC
+              ) AS rnk
+         FROM sets s
+         JOIN sessions ses ON ses.id = s.session_id
+        WHERE s.exercise_id IN (${placeholders(exerciseIds.length)})
+          AND s.deleted_at IS NULL
+          AND ${WORKING}
+          AND ses.deleted_at IS NULL
+        GROUP BY s.exercise_id, ses.id
+     )
+     WHERE rnk <= ?
+     ORDER BY "exerciseId", "localDate", "sessionId"`,
+    [...exerciseIds, limit],
+  )
+
+  const byExercise = new Map<number, ExerciseSessionRow[]>()
+  for (const row of rows) {
+    const list = byExercise.get(row.exerciseId)
+    if (list) list.push(row)
+    else byExercise.set(row.exerciseId, [row])
+  }
+  return byExercise
+}
+
 export interface Prefill {
   weightKg: number | null
   reps: number | null

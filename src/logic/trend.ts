@@ -169,6 +169,64 @@ const TILE_LABEL: Record<TrendSeries['measure'], string> = {
  * Ties go to the EARLIEST session, so the date answers "when was this first
  * reached" rather than "when was it last repeated".
  */
+export interface Stall {
+  /** The last session that set a new best. Where the line stopped rising. */
+  since: string
+  /** How many sessions have been performed since, none of them better. */
+  sessions: number
+}
+
+/**
+ * How many sessions without a new best count as stalled.
+ *
+ * **Chosen, not measured.** Two is inside the normal run of a bad week; four
+ * is most of a month before the app says anything. Three is the first number
+ * that is more likely to be a pattern than a Tuesday, and it is a knob: nothing
+ * below depends on the value.
+ */
+export const STALL_SESSIONS = 3
+
+/**
+ * Has this exercise stopped moving?
+ *
+ * Out of the same series the chart draws and `bestOf` reads, so there is one
+ * definition of "better" in the app rather than three. `lowerIsBetter` carries
+ * the assistance inversion, which means an Assisted Chinup stalls when the
+ * assistance stops coming DOWN - the opposite arithmetic, for free.
+ *
+ * **A repeat of the best is not progress.** Matching the old number is exactly
+ * the state this is here to report, so the comparison is strict.
+ *
+ * Two limits, both stated rather than solved:
+ *
+ * - The series comes from `exerciseSessions`, capped at 200 sessions, so this
+ *   is strictly a stall within that window. No exercise is near it today.
+ * - Fewer than `sessions + 1` points is arithmetic, not information: an
+ *   exercise performed twice cannot have stalled, it has barely started. Null
+ *   is the answer there, and it is a real answer rather than a failure.
+ */
+export function stallOf(
+  series: TrendSeries,
+  sessions: number = STALL_SESSIONS,
+): Stall | null {
+  const points = series.points
+  if (points.length < sessions + 1) return null
+
+  // Where the best was last set. Walking forward and taking strict improvement
+  // means a tie leaves the marker where it was, which is the whole point.
+  let bestIndex = 0
+  for (let i = 1; i < points.length; i++) {
+    const better = series.lowerIsBetter
+      ? points[i].value < points[bestIndex].value
+      : points[i].value > points[bestIndex].value
+    if (better) bestIndex = i
+  }
+
+  const since = points.length - 1 - bestIndex
+  if (since < sessions) return null
+  return { since: points[bestIndex].localDate, sessions: since }
+}
+
 export function bestOf(series: TrendSeries): BestPoint | null {
   let best: TrendPoint | null = null
   for (const point of series.points) {

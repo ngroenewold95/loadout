@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { bestOf, trendSeries, type SessionCandidate } from './trend.ts'
+import { bestOf, stallOf, trendSeries, type SessionCandidate } from './trend.ts'
 
 const empty: Omit<SessionCandidate, 'localDate'> = {
   bestWeightKg: null,
@@ -175,5 +175,90 @@ describe('bestOf', () => {
 
   it('is null when nothing is plottable', () => {
     expect(bestFor([on('2026-06-24', {})], 'weight_reps', 'total')).toBeNull()
+  })
+})
+
+describe('stallOf', () => {
+  const stallFor = (
+    sessions: SessionCandidate[],
+    trackingType: Parameters<typeof trendSeries>[1] = 'weight_reps',
+    loadMode = 'total',
+  ) => stallOf(trendSeries(sessions, trackingType, loadMode))
+
+  it('reports the last session that set a best, and how long ago', () => {
+    const stall = stallFor([
+      on('2026-05-01', { bestWeightKg: 100 }),
+      on('2026-06-01', { bestWeightKg: 110 }),
+      on('2026-07-01', { bestWeightKg: 105 }),
+      on('2026-08-01', { bestWeightKg: 110 }),
+      on('2026-09-01', { bestWeightKg: 107.5 }),
+    ])
+    expect(stall).toEqual({ since: '2026-06-01', sessions: 3 })
+  })
+
+  it('says nothing while the line is still going up', () => {
+    expect(
+      stallFor([
+        on('2026-05-01', { bestWeightKg: 100 }),
+        on('2026-06-01', { bestWeightKg: 102.5 }),
+        on('2026-07-01', { bestWeightKg: 105 }),
+        on('2026-08-01', { bestWeightKg: 107.5 }),
+      ]),
+    ).toBeNull()
+  })
+
+  it('counts a repeat of the best as a stall, not as progress', () => {
+    // Matching the old number is exactly the state this is here to report.
+    const stall = stallFor([
+      on('2026-05-01', { bestWeightKg: 110 }),
+      on('2026-06-01', { bestWeightKg: 110 }),
+      on('2026-07-01', { bestWeightKg: 110 }),
+      on('2026-08-01', { bestWeightKg: 110 }),
+    ])
+    expect(stall).toEqual({ since: '2026-05-01', sessions: 3 })
+  })
+
+  /** The inversion: an assisted exercise stalls when the assistance stops falling. */
+  it('inverts for assistance', () => {
+    const sessions = [
+      on('2026-05-01', { leastAssistKg: 30 }),
+      on('2026-06-01', { leastAssistKg: 25 }),
+      on('2026-07-01', { leastAssistKg: 27.5 }),
+      on('2026-08-01', { leastAssistKg: 25 }),
+      on('2026-09-01', { leastAssistKg: 30 }),
+    ]
+    expect(stallFor(sessions, 'bodyweight', 'assistance')).toEqual({
+      since: '2026-06-01',
+      sessions: 3,
+    })
+    // The same numbers read as ordinary load stall from the OTHER end: 30 is
+    // the best there, so the marker sits on the first session and never moves,
+    // the closing 30 being a repeat rather than an improvement.
+    expect(
+      stallFor(sessions.map((s) => on(s.localDate, { bestWeightKg: s.leastAssistKg }))),
+    ).toEqual({ since: '2026-05-01', sessions: 4 })
+  })
+
+  it('says nothing about an exercise with too little history to judge', () => {
+    // Two sessions is arithmetic, not information.
+    expect(
+      stallFor([
+        on('2026-08-01', { bestWeightKg: 100 }),
+        on('2026-09-01', { bestWeightKg: 100 }),
+      ]),
+    ).toBeNull()
+    expect(stallFor([])).toBeNull()
+  })
+
+  it('takes the threshold as a parameter', () => {
+    const sessions = [
+      on('2026-05-01', { bestWeightKg: 110 }),
+      on('2026-06-01', { bestWeightKg: 105 }),
+      on('2026-07-01', { bestWeightKg: 105 }),
+    ]
+    expect(stallOf(trendSeries(sessions, 'weight_reps', 'total'), 2)).toEqual({
+      since: '2026-05-01',
+      sessions: 2,
+    })
   })
 })

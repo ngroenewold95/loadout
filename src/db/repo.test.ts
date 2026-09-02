@@ -22,6 +22,7 @@ import {
   templatePlan,
   exerciseDetail,
   exerciseHistory,
+  exerciseSessionsFor,
   exerciseStats,
   removeSessionExercise,
   reorderSessionExercises,
@@ -1381,5 +1382,65 @@ describe('the base weight chain', () => {
 
     const [set] = await listSessionSets(db, sessionId)
     expect(set.baseWeightKg).toBeCloseTo(20.41, 4)
+  })
+})
+
+describe('exerciseSessionsFor', () => {
+  it('answers several exercises in one statement, oldest first', async () => {
+    const squat = await seedExercise('Squat')
+    const press = await seedExercise('Press')
+    await seedHistory(squat, '2026-06-01', [{ weightKg: 100, reps: 5 }])
+    await seedHistory(squat, '2026-07-01', [
+      { weightKg: 105, reps: 5 },
+      { weightKg: 105, reps: 4 },
+    ])
+    await seedHistory(press, '2026-07-01', [{ weightKg: 60, reps: 8 }])
+
+    const byExercise = await exerciseSessionsFor(db, [squat, press])
+
+    // Oldest first, because a chart reads left to right.
+    expect(byExercise.get(squat)?.map((r) => [r.localDate, r.bestWeightKg])).toEqual([
+      ['2026-06-01', 100],
+      ['2026-07-01', 105],
+    ])
+    expect(byExercise.get(squat)?.[1].setCount).toBe(2)
+    expect(byExercise.get(press)?.map((r) => r.localDate)).toEqual(['2026-07-01'])
+  })
+
+  it('applies the limit per exercise, not across the result', async () => {
+    // The whole reason for the DENSE_RANK partition: a plain LIMIT would spend
+    // the allowance on whichever exercise sorted first.
+    const squat = await seedExercise('Squat')
+    const press = await seedExercise('Press')
+    for (const d of ['2026-05-01', '2026-06-01', '2026-07-01']) {
+      await seedHistory(squat, d, [{ weightKg: 100, reps: 5 }])
+      await seedHistory(press, d, [{ weightKg: 60, reps: 8 }])
+    }
+
+    const byExercise = await exerciseSessionsFor(db, [squat, press], 2)
+    expect(byExercise.get(squat)?.map((r) => r.localDate)).toEqual([
+      '2026-06-01',
+      '2026-07-01',
+    ])
+    expect(byExercise.get(press)).toHaveLength(2)
+  })
+
+  it('separates assistance from load, and skips warm-ups', async () => {
+    const chinup = await seedExercise('Assisted Chinup', { loadMode: 'assistance' })
+    await seedHistory(chinup, '2026-07-01', [
+      { weightKg: 40, reps: 10, loadMode: 'assistance', setType: 'warmup' },
+      { weightKg: 25, reps: 8, loadMode: 'assistance' },
+      { weightKg: 30, reps: 6, loadMode: 'assistance' },
+    ])
+
+    const [row] = (await exerciseSessionsFor(db, [chinup])).get(chinup)!
+    // Least assistance is the best set, and the 40 kg warm-up is not in it.
+    expect(row.leastAssistKg).toBe(25)
+    expect(row.bestWeightKg).toBeNull()
+    expect(row.setCount).toBe(2)
+  })
+
+  it('returns an empty map for no exercises rather than reading anything', async () => {
+    expect((await exerciseSessionsFor(db, [])).size).toBe(0)
   })
 })
