@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- E6: barbell width, one slab a side, softened, flat. -->
+  <rect width="108" height="108" fill="#002a77"/>
+  <g fill="#b4c5ff">
+    <rect x="26" y="50" width="56" height="8" rx="2"/>
+    <rect x="32" y="36" width="11" height="36" rx="4"/>
+    <rect x="65" y="36" width="11" height="36" rx="4"/>
+  </g>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- D3: two plates each end, the way a loadable dumbbell actually looks. -->
+  <rect width="108" height="108" fill="#002a77"/>
+  <g fill="#b4c5ff">
+    <rect x="42" y="50" width="24" height="8"/>
+    <rect x="34" y="38" width="8" height="32"/>
+    <rect x="24" y="44" width="6" height="20"/>
+    <rect x="66" y="38" width="8" height="32"/>
+    <rect x="78" y="44" width="6" height="20"/>
+  </g>
+</svg>

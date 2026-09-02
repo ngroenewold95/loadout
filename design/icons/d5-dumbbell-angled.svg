@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- D5: D1 turned to the 45 degrees the current icon sits at. -->
+  <rect width="108" height="108" fill="#002a77"/>
+  <g fill="#b4c5ff" transform="rotate(-45 54 54)">
+    <rect x="40" y="50" width="28" height="8"/>
+    <rect x="28" y="36" width="12" height="36"/>
+    <rect x="68" y="36" width="12" height="36"/>
+  </g>
+</svg>

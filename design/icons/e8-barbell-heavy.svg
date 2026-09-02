@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- E8: heavier again - deeper plates and a slightly thicker handle. -->
+  <rect width="108" height="108" fill="#002a77"/>
+  <g fill="#b4c5ff" transform="rotate(-45 54 54)">
+    <rect x="26" y="49" width="56" height="10" rx="3"/>
+    <rect x="28" y="32" width="15" height="44" rx="4"/>
+    <rect x="65" y="32" width="15" height="44" rx="4"/>
+  </g>
+</svg>

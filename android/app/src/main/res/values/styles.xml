@@ -16,7 +16,14 @@
     </style>
 
 
+    <!--
+        Android 12 and up draws its own splash from these two, ignoring the
+        window background entirely; older versions use the background. Both are
+        set, so the cold start looks the same either way.
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
     </style>
 </resources>

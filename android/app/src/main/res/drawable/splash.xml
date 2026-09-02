@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The launch window, and the window behind the WebView.
+
+    There is no `installSplashScreen()` call anywhere - `@capacitor/splash-screen`
+    is not installed - so `AppTheme.NoActionBarLaunch` stays the activity's theme
+    for its whole life and this drawable is what shows before the first frame.
+    It is the launcher icon's own two parts, so the cold start and the home
+    screen agree: the same blue, the same mark, centred.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/ic_launcher_background"/>
+    <item
+        android:drawable="@mipmap/ic_launcher_foreground"
+        android:gravity="center"
+        android:width="192dp"
+        android:height="192dp"/>
+</layer-list>
