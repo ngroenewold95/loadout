@@ -39,6 +39,7 @@ import {
   listTemplateExercises,
   localDateOf,
   logSet,
+  nextTemplate,
   prefillFor,
   searchExercises,
   setPlannedSets,
@@ -730,6 +731,39 @@ describe('templates and picker', () => {
       targetRepMax: 8,
       restS: 180,
     })
+  })
+
+  it('does not count a live workout as the last time a template was done', async () => {
+    const squat = await seedExercise('Squat')
+    const press = await seedExercise('Press')
+    const now = Date.now()
+    const { lastInsertId: dayA } = await db.exec(
+      'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, 0, ?, ?)',
+      ['Day 1', now, now],
+    )
+    const { lastInsertId: dayB } = await db.exec(
+      'INSERT INTO templates (name, order_index, created_at, updated_at) VALUES (?, 1, ?, ?)',
+      ['Day 2', now, now],
+    )
+    await addTemplateExercise(db, dayA, squat)
+    await addTemplateExercise(db, dayB, press)
+
+    await seedHistory(squat, '2026-07-15', [{ weightKg: 105, reps: 5 }], 'Day 1')
+    await seedHistory(press, '2026-07-18', [{ weightKg: 60, reps: 5 }], 'Day 2')
+
+    // Day 1 is up next, and starting it must not change that until it is
+    // finished: an unfinished session is not a session that was done.
+    expect((await nextTemplate(db))?.name).toBe('Day 1')
+
+    const sessionId = await startSession(db, { templateId: dayA, name: 'Day 1' })
+    const [live] = await listTemplates(db)
+    expect(live.lastUsedDate).toBe('2026-07-15')
+    expect((await nextTemplate(db))?.name).toBe('Day 1')
+
+    await endSession(db, sessionId)
+    const [finished] = await listTemplates(db)
+    expect(finished.lastUsedDate).toBe(localDateOf())
+    expect((await nextTemplate(db))?.name).toBe('Day 2')
   })
 
   it('rejects a rep range whose max is below its min', async () => {

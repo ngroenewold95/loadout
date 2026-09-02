@@ -161,8 +161,11 @@ export interface TemplateSummary {
   name: string
   orderIndex: number
   exerciseCount: number
-  /** Most recent session of this workout, by template link OR by name - the
-   *  imported history predates templates and carries only the name. */
+  /** Most recent **finished** session of this workout, by template link OR by
+   *  name - the imported history predates templates and carries only the name.
+   *  A live workout is not part of its own history, so it does not count here:
+   *  starting one used to move Home's `last done` to today and hand the A/B
+   *  rotation to the other template before a single set was logged. */
   lastUsedDate: string | null
 }
 
@@ -173,7 +176,7 @@ export function listTemplates(db: Db): Promise<TemplateSummary[]> {
             t.order_index AS "orderIndex",
             COUNT(te.id) AS "exerciseCount",
             (SELECT MAX(s.local_date) FROM sessions s
-              WHERE s.deleted_at IS NULL
+              WHERE s.deleted_at IS NULL AND s.ended_at_utc IS NOT NULL
                 AND (s.template_id = t.id OR s.name = t.name)) AS "lastUsedDate"
        FROM templates t
        LEFT JOIN template_exercises te
