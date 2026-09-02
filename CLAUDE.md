@@ -46,6 +46,11 @@ document and the handoff point for a cold start.
   `?N`. Every read filters `deleted_at IS NULL` explicitly.
 - No query inside a loop: on device each call crosses the JS/native bridge.
 - Never compare weights with `===`. Use `weightsEqual` from `src/logic/units.ts`.
+- **The launcher icons are generated, not drawn.** `android/.../mipmap-*` PNGs
+  come out of `node scripts/make-icons.mjs`, whose geometry mirrors
+  `design/icons/e12-e8-longest-bar.svg`. Edit the geometry and re-run; hand
+  edits to the PNGs are lost on the next run. There is no rasteriser installed
+  here, which is why that script exists at all.
 - `Examples/` and `db/` are gitignored and hold the only copy of personal data,
   including medical notes. Nothing derived from them may be committed or
   packaged as an Android asset.

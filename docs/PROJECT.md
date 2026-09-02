@@ -19,6 +19,12 @@ first, no server, no sync. Imports ~5 years of history.
 **The constraint that decides everything:** logging a set must take about two
 taps. A better data model does not compensate for a slower logging loop.
 
+**Cold start, in reading order:** this section, then "Current state" for what
+exists, "Decisions" for what may not be revisited cheaply, "File map" for where
+things live, "Dev loop" for the commands, and "Where to pick this up" under
+Next steps for what to do first. Everything between is the record of how each
+piece was proved, and is worth reading before changing that piece.
+
 Reference app `workout.progression.lite` is installed on the device and is a
 legitimate baseline - inspect it with `adb` when a behaviour question comes up.
 Doing so has already overturned two wrong assumptions.
@@ -94,7 +100,6 @@ Working and verified on device (Pixel 7, Android 17 / API 37):
 - **The gym settings, verified on device** - increment, keep screen on, and the
   three rest-timer toggles, all in SQLite. See below.
 - **Synced-folder export, verified on device including uninstall.** See below.
-- 288 tests passing, typecheck and lint clean
 
 Everything that was built and wired to nothing is now wired: `platesFor` has a
 caller, `app_settings` and `plate_inventory` are seeded, and `exercises.loading`
@@ -104,10 +109,26 @@ caller, `app_settings` and `plate_inventory` are seeded, and `exercises.loading`
   first chart, all verified on device** (2026-08-26). Stages 17 to 20 were built
   in one batch with the phone disconnected and then proved in a single session
   of 17 checks. See below.
-- 288 tests passing, typecheck and lint clean
+- **The demo batch, verified on device** (2026-09-01). Stages 23 to 34, built
+  with the phone disconnected and proved in one session of ten checks:
+  - a live workout no longer counts as the last time a template was done
+  - a best set with its date, out of the series the chart already draws, so
+    bodyweight work reads `MOST REPS` instead of a dash
+  - the summary lists every set, counts reps, says how it went against the last
+    time that workout was done, and copies the whole thing to the clipboard
+  - notes on a workout and on a set, the first writers those columns have had
+  - Home carries a volume trend and weekly muscle columns
+  - a year of training as a calendar, one square a day
+  - an exercise added by hand inherits the workout's set count, so
+    auto-advance no longer returns to it forever
+  - a launcher icon and splash of our own, rendered by `scripts/make-icons.mjs`
+  See "Stages 24 to 34" below for what was measured.
+- 323 tests passing, typecheck and lint clean
 
 Not built yet: deleting the spikes, which is now stage 21 and runs immediately
-before the cutover.
+before the cutover. **The cutover itself has not been performed** - the device
+database is still disposable, and the user is logging in Progression in tandem,
+so `npm run import` still works and the phone can be re-pushed freely.
 
 ---
 
@@ -1202,7 +1223,11 @@ src/
     plan.ts         the current programme, as a SEED; shouldIncreaseLoad
     entry.ts        entry shapes, steppers, scrubSteps, keypad parsing
     slots.ts        the set rows an exercise shows, performed or not
-    session.ts      nextIncompleteIndex, sessionTotals (assistance excluded)
+    session.ts      nextIncompleteIndex, sessionTotals (assistance excluded,
+                    reps included), groupByExercise, defaultTargetSets
+    volume.ts       weeks and calendar days: weeklyVolume, periodOverPeriod,
+                    calendarDays, muscleWeeks. Monday weeks, empty ones kept
+    trend.ts        what a chart of one exercise is a chart OF, and bestOf
     dates.ts        daysBetween, relativeDay - "17 days ago"
     plates.ts       inventory-aware plate solver; the `loading` axis
     muscles.ts      the eight groups and their colours; muscleMark
@@ -1269,7 +1294,12 @@ src/
                     template and in the live workout
     PlateChips.tsx  what to load, above the entry fields. Dashed when short
     Settings.tsx    the handful of settings that matter under a bar
-    setText.ts      how a performed set reads, in one place
+    setText.ts      how a performed set reads, in one place. `spoken` spells
+                    the unit out, for text that leaves the app
+    shareText.ts    a finished workout as plain text, pure and tested
+    copyText.ts     the clipboard, with no plugin: the async API, then
+                    execCommand as the fallback
+    TrainingCalendar.tsx  a year of training, one square a day
     DbSmoke.tsx     throwaway on-device check of the db layer - same
 scripts/
   import.ts         CSV -> SQLite, drop-and-rebuild, reconciliation
@@ -1278,6 +1308,8 @@ scripts/
   analyze-backup.ts read-only reader for the .pgnbkp app backup; joins it to
                     the CSV to recover exercise names, then prints only
   add-strict.mjs    post-processes drizzle output to add STRICT
+  make-icons.mjs    renders the launcher icon to PNG from its geometry. No
+                    rasteriser exists here, so it is zlib and five rectangles
 drizzle/            generated SQL migrations + journal
 android/app/src/main/java/com/groenewold/loadout/
   MainActivity.java      registers plugins; owns the isForeground flag
@@ -1286,6 +1318,7 @@ android/app/src/main/java/com/groenewold/loadout/
   RestTimerPlugin.java   JS-facing surface: start/extend/cancel/permissions
   RestTimerService.java  foreground service, overlay lifecycle, haptics
   TimerOverlayView.java  hand-drawn bubble: ring, M:SS, red count-up
+design/icons/       the icon candidates, as SVG. `e12` is the one installed
 Examples/           gitignored - the ONLY copy of the source export
 db/                 gitignored - rebuildable until cutover
 ```
@@ -1297,13 +1330,14 @@ db/                 gitignored - rebuildable until cutover
 ```bash
 npm run dev          # Vite dev server; seeds FABRICATED history if empty
 npm run build        # tsc -b && vite build
-npm run test         # vitest (256 tests)
+npm run test         # vitest (323 tests)
 npm run lint         # oxlint
 npm run import       # rebuild db/ from the NEWEST Examples/*.csv; refuses after cutover
 npm run profile      # profile any CSV's structure
 npm run analyze:backup  # read the .pgnbkp app backup; --all for archived plans
 npm run db:generate  # drizzle-kit generate + add STRICT
 npm run db:migrate   # apply migrations to db/loadout.sqlite (backs up first)
+node scripts/make-icons.mjs   # re-render the launcher icons from their geometry
 ```
 
 Deploying to the phone:
@@ -2599,7 +2633,8 @@ the database.**
 29. **Session-over-session deltas on the summary.** Built.
 30. **A launcher icon.** Chosen (`e12`) and installed across all five densities
     by `scripts/make-icons.mjs`, which renders PNGs with no image tooling at
-    all. Not yet seen on a home screen.
+    all. Seen in the launcher drawer under its circle mask, and the splash
+    matches it.
 
 31. **An exercise added by hand can complete**, so auto-advance no longer
     returns to it forever. The rough edge stage 9 recorded.
@@ -2612,6 +2647,42 @@ Everything from 23 to 34 was built with the phone disconnected on 2026-08-26 and
 two faults in the calendar. The cutover is unaffected and stays a
 separate decision; the user is logging in Progression in tandem, so the device
 database stays disposable and `npm run import` keeps working.
+
+### Where to pick this up
+
+In order, and none of them blocks another:
+
+1. **Stage 21, delete the spikes** - `TimerSpike.tsx`, `DbSmoke.tsx`, the
+   `debug` screen and `undoLastSet`, which then has no caller. Deliberately
+   last: `DbSmoke` is still the quickest on-device check after a repo change,
+   so it goes immediately before the cutover and not before.
+2. **The cutover**, when the user decides. The procedure is written down above
+   and has not been run. It is one-way: `npm run import` refuses the moment any
+   `sets.source = 'native'` row exists.
+3. **The next batch of features**, ranked below. Nothing in it is started.
+
+Two rough edges worth knowing about, both recorded above and neither a bug:
+the session-over-session line needs two sessions sharing a name, so it is blank
+for a workout whose imported history used a different one; and a hand-added
+exercise reads `2 sets · 0/2 sets`, because it inherits a set count but no rep
+range.
+
+### The next batch, ranked
+
+| Idea | Why it waits |
+|---|---|
+| **Stall detection** | An exercise that has not moved in N sessions is what a coach notices and the app cannot say. Needs a rule argued about, not a tile |
+| **Warm-up sets** | `set_type` is `'unknown'` on all 6,209 rows. They then have to leave `sessionTotals`, `shouldIncreaseLoad` and the history cards, which is why it is not a toggle |
+| **Supersets made visible** | `order_index` interleaves them truthfully and 12 imported sessions contain them; nothing in the UI says so |
+| **A light theme** | The palette was sampled from a dark reference app. Real work across every screen, and invisible until a bright room |
+| **Restore from the synced copy, in-app** | Export is built and proved against an uninstall; the way back is still `adb`. Matters at cutover, not before |
+| **Rest notification actions** | Skip and add-30 without unlocking. Java work in `RestTimerService`, and the pill already covers it in-app |
+| **Per-exercise unit, and a unit setting** | `DEFAULT_UNIT` is a constant and `preferred_unit` is read but never editable |
+| **Plate calculator screen** | `platesFor` answers it for the entry bar's weight; an arbitrary target is a different question |
+| **Repeat last session** | Fill every exercise's target from what was performed, rather than one exercise at a time |
+| **CSV export** | So the history outlives this app |
+| **Home-screen widget** | "What is next up", the only thing wanted before leaving the house. New native surface |
+| **RPE in the entry bar** | Parsed at import, read by nothing, and the natural first thing to clutter the two-tap loop with |
 
 ### Not blocking cutover
 
@@ -2638,10 +2709,10 @@ database stays disposable and `npm run import` keeps working.
   `shouldIncreaseLoad`. Home's readiness list stays text, deliberately - it says
   what to think about before leaving the house, and the bar is where the number
   is applied.
-- ~~Progress and **trends over time**.~~ **Half built in stage 20**: one
-  exercise's best set is charted on its detail screen, verified on device. Nothing compares a period
-  against an earlier one, and Home carries no trend tile - both were left out of
-  that stage deliberately.
+- ~~Progress and **trends over time**.~~ **Finished in stages 20, 23 and 32**:
+  one exercise's best set is charted on its detail screen, Home carries a
+  twelve-week volume trend with a four-weeks-against-four comparison and weekly
+  muscle columns, and a year of training is a calendar.
 - ~~`npm run dev` runs against an empty jeep-sqlite database.~~ **Done.**
   `src/db/devSeed.ts` writes fabricated sessions into an empty web database on
   first load. Three guards keep it away from real data: **web only** and **dev
@@ -2729,9 +2800,14 @@ none of it is measured** - it is written down so it stops being re-derived, and
 anything promoted out of here needs the same evidence everything above got. The
 notes say what each one would cost or collide with, where that is known.
 
+**Five of these have since been built** and are struck through where they sit,
+rather than deleted, so the reasoning that promoted them stays readable. The
+ranked shortlist of what to take next is under "The next batch, ranked" above;
+this list is the wider pool it is drawn from.
+
 **Uses a column that already exists**
 
-- **Warm-up sets.** `set_type` is on every row and is `'unknown'` for all 6,206,
+- **Warm-up sets.** `set_type` is on every row and is `'unknown'` for all 6,209,
   because the export has no such column. A toggle in the entry bar would give it
   a writer, and warm-ups would then have to leave `sessionTotals`,
   `shouldIncreaseLoad` and the history cards, which is the whole reason it is
@@ -2739,9 +2815,11 @@ notes say what each one would cost or collide with, where that is known.
 - **RPE.** Parsed at import and stored, read by nothing. It is the natural input
   to any auto-regulation, and the natural first thing to clutter the two-tap
   loop with, so it would have to earn its place in the entry bar.
-- **Notes from inside the app.** `sessions.notes` and `sets.notes` have no
-  writer in the UI at all. Note that this is the column carrying the medical
-  history, so a demo build and a notes editor pull in opposite directions.
+- ~~**Notes from inside the app.**~~ **Built in stage 33**, on a workout and on
+  a set. The objection recorded here - that this is the column carrying the
+  medical history, so a demo build and a notes editor pull in opposite
+  directions - went away when stage 22 was dropped and the demo moved to the
+  real data. The share text still leaves notes out, deliberately.
 - **Per-exercise unit.** `preferred_unit` is read and never editable.
 
 **The logging loop**
@@ -2755,9 +2833,9 @@ notes say what each one would cost or collide with, where that is known.
   one behaviour.
 - **Supersets as a visible thing.** `order_index` already interleaves them
   truthfully and 12 imported sessions contain them; nothing in the UI says so.
-- **An exercise added by hand never completes**, because it carries no rep
-  target, so auto-advance keeps returning to it. Recorded in stage 9 and still
-  true.
+- ~~**An exercise added by hand never completes.**~~ **Fixed in stage 31**: it
+  inherits the workout's own set count, so auto-advance moves past it. It still
+  carries no rep range, which is why its header reads `2 sets · 0/2 sets`.
 
 **The programme**
 
@@ -2767,17 +2845,22 @@ notes say what each one would cost or collide with, where that is known.
   the range on every set. Double progression, linear, and rep-goal schemes are
   all different functions over the same rows.
 - **Stall detection.** An exercise that has not moved in N sessions is the thing
-  a coach would notice and the app currently cannot say.
-- **A calendar view**, which is the one view of five years the app does not have.
+  a coach would notice and the app currently cannot say. **The most wanted thing
+  left on this list.**
+- ~~**A calendar view**, which is the one view of five years the app does not
+  have.~~ **Built in stage 32.**
 
 **Insight**
 
-- **Volume by muscle group over time**, extending the 28-day bar on Home into a
-  trend. The muscle map is already 84 of 88 exercises.
-- **Consistency by week**, which the cadence line states as a number and never
-  draws.
-- **Session-over-session deltas on the summary**: volume, sets and top set
-  against the last time that template was performed.
+- ~~**Volume by muscle group over time**, extending the 28-day bar on Home into
+  a trend.~~ **Built in stage 34**, as weekly stacked columns - counted in sets
+  rather than volume, for the reason the bar above it already gives.
+- ~~**Consistency by week**, which the cadence line states as a number and never
+  draws.~~ **Built in stages 23 and 32**: the volume bars are per week, and the
+  calendar draws every day of the year.
+- ~~**Session-over-session deltas on the summary**: volume, sets and top set
+  against the last time that template was performed.~~ **Built in stage 29**,
+  for volume, sets and reps. The top set is not compared and could be.
 
 **Platform**
 
@@ -2788,7 +2871,8 @@ notes say what each one would cost or collide with, where that is known.
 - **Restore from a synced copy, inside the app.** Export is built and proved
   against an uninstall; the way back is currently `adb`.
 - **A light theme.** The palette was sampled from a dark reference app, and a
-  bright room is exactly where a demo happens.
+  bright room is exactly where a demo happens. Note the launcher icon and splash
+  are a fixed dark blue and would need their own answer.
 - **An accessibility pass.** The colour rail is already paired with the group's
   name, which was chosen partly for this; nothing else has been checked.
 
