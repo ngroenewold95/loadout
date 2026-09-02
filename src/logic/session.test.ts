@@ -3,6 +3,7 @@ import {
   defaultTargetSets,
   groupByExercise,
   isComplete,
+  isWorkingSet,
   nextIncompleteIndex,
   sessionTotals,
 } from './session.ts'
@@ -47,6 +48,18 @@ describe('nextIncompleteIndex', () => {
     // finishing the last exercise must go back to it, not stop.
     const sets = setsFor([1, 2], [2, 1], [3, 2])
     expect(nextIncompleteIndex(planned, sets, 2)).toBe(1)
+  })
+
+  it('does not let warm-ups complete an exercise', () => {
+    const planned = plan([2, 2])
+    // Two warm-ups on exercise 1 and nothing else. Auto-advancing off it would
+    // leave the workout claiming an exercise nobody actually worked.
+    const sets = [
+      { exerciseId: 1, setType: 'warmup' },
+      { exerciseId: 1, setType: 'warmup' },
+      { exerciseId: 2, setType: 'working' },
+    ]
+    expect(nextIncompleteIndex(planned, sets, 1)).toBe(0)
   })
 
   it('returns null when everything is complete', () => {
@@ -115,6 +128,45 @@ describe('sessionTotals', () => {
 
   it('is zero for an empty session', () => {
     expect(sessionTotals([])).toEqual({ sets: 0, exercises: 0, volumeKg: 0, reps: 0 })
+  })
+
+  it('leaves warm-ups out of every number', () => {
+    // Unlike assistance, which is a real set loaded the other way round, a
+    // warm-up is not a claim about what the session came to at all - so it
+    // leaves the rep count too, which assistance does not.
+    const totals = sessionTotals([
+      set(),
+      set({ setType: 'warmup', weightKg: 60, reps: 10 }),
+    ])
+    expect(totals).toEqual({ sets: 1, exercises: 1, volumeKg: 500, reps: 5 })
+  })
+
+  it('does not count an exercise reached only by warm-ups', () => {
+    const totals = sessionTotals([set(), set({ exerciseId: 2, setType: 'warmup' })])
+    expect(totals.exercises).toBe(1)
+  })
+
+  it('counts every imported row, which carries set_type unknown', () => {
+    // The load-bearing one. All 6,209 imported rows are `unknown`, so a filter
+    // written as `=== 'working'` would erase five years of history from every
+    // total the moment warm-ups shipped.
+    const totals = sessionTotals([set({ setType: 'unknown' }), set({ setType: 'unknown' })])
+    expect(totals).toEqual({ sets: 2, exercises: 1, volumeKg: 1000, reps: 10 })
+  })
+})
+
+describe('isWorkingSet', () => {
+  it('is true for anything that is not a warm-up', () => {
+    expect(isWorkingSet({ setType: 'working' })).toBe(true)
+    expect(isWorkingSet({ setType: 'unknown' })).toBe(true)
+    expect(isWorkingSet({ setType: 'drop' })).toBe(true)
+    // A row read through an interface that does not carry the column at all.
+    expect(isWorkingSet({})).toBe(true)
+    expect(isWorkingSet({ setType: null })).toBe(true)
+  })
+
+  it('is false only for a warm-up', () => {
+    expect(isWorkingSet({ setType: 'warmup' })).toBe(false)
   })
 })
 

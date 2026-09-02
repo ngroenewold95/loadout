@@ -24,8 +24,8 @@ import {
 import { useNav } from '../state/nav.ts'
 import { formatDuration } from '../logic/entry.ts'
 import { relativeDay } from '../logic/dates.ts'
-import { groupByExercise, sessionTotals } from '../logic/session.ts'
-import { localDateOf } from '../db/repo.ts'
+import { groupByExercise, isWorkingSet, sessionTotals } from '../logic/session.ts'
+import { localDateOf, type PerformedSet } from '../db/repo.ts'
 import { formatWeight, DEFAULT_UNIT } from '../logic/units.ts'
 import { copyText } from './copyText.ts'
 import { GroupRail } from './GroupTag.tsx'
@@ -46,6 +46,29 @@ interface Props {
  */
 function delta(value: number, format: (v: number) => string): string {
   return value > 0 ? `+${format(value)}` : format(value)
+}
+
+/** How many of these count. Warm-ups are listed here but totalled nowhere. */
+function workingCount(sets: readonly PerformedSet[]): number {
+  return sets.filter(isWorkingSet).length
+}
+
+/**
+ * The badge each row carries.
+ *
+ * A warm-up reads `W` and does not take a number, so the working sets are
+ * numbered 1, 2, 3 exactly as the history cards and the logging screen's slots
+ * number them. Numbering straight down the list would put every screen
+ * describing the same session one apart.
+ */
+function numberSets(
+  sets: readonly PerformedSet[],
+): { set: PerformedSet; label: string }[] {
+  let n = 0
+  return sets.map((set) => ({
+    set,
+    label: isWorkingSet(set) ? String(++n) : 'W',
+  }))
 }
 
 export function SessionSummary({ sessionId }: Props) {
@@ -181,7 +204,11 @@ export function SessionSummary({ sessionId }: Props) {
                 <GroupRail primaryMuscle={group.primaryMuscle} />
                 <span className="truncate font-medium">{group.name}</span>
                 <span className="text-text-dim ml-auto shrink-0 text-sm tabular-nums">
-                  {group.sets.length} {group.sets.length === 1 ? 'set' : 'sets'}
+                  {/* Working sets, so this agrees with the SETS tile above and
+                      with the fraction the logging screen showed. The warm-ups
+                      are still listed below, marked. */}
+                  {workingCount(group.sets)}{' '}
+                  {workingCount(group.sets) === 1 ? 'set' : 'sets'}
                 </span>
               </div>
 
@@ -189,10 +216,10 @@ export function SessionSummary({ sessionId }: Props) {
                   them. A summary that only counted them made a 22-set workout
                   read as `3 sets` eleven times. */}
               <div className="mt-1 flex flex-col gap-0.5 pl-5">
-                {group.sets.map((set, i) => (
+                {numberSets(group.sets).map(({ set, label }) => (
                   <p key={set.id} className="flex items-baseline gap-2 text-sm tabular-nums">
                     <span className="text-text-dim w-4 shrink-0 text-right text-xs">
-                      {i + 1}
+                      {label}
                     </span>
                     <span className="text-text-dim">{describeSet(set, unit)}</span>
                     {/* A set note is usually the machine's own base weight or

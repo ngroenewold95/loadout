@@ -17,6 +17,7 @@
 import type { Db } from './driver.ts'
 import type { Loading, LoadMode, SetType, TrackingType } from './schema.ts'
 import type { Unit } from '../logic/units.ts'
+import { isWorkingSet } from '../logic/session.ts'
 
 /** Sentinel for "exclude nothing" - no row has a negative rowid here. */
 const NO_SESSION = -1
@@ -648,6 +649,7 @@ export function searchExercises(
             COUNT(s.id) AS "setCount"
        FROM exercises e
        LEFT JOIN sets s ON s.exercise_id = e.id AND s.deleted_at IS NULL
+                       AND ${WORKING}
       WHERE e.deleted_at IS NULL AND e.name LIKE ?
       GROUP BY e.id
       ORDER BY MAX(s.performed_at_utc) IS NULL,
@@ -1193,6 +1195,7 @@ export async function recentPerformance(
          WHERE s.exercise_id IN (${placeholders(exerciseIds.length)})
            AND s.session_id <> ?
            AND s.deleted_at IS NULL
+           AND ${WORKING}
            AND ses.deleted_at IS NULL
       )
       WHERE rnk <= ?
@@ -1351,6 +1354,7 @@ export function exerciseStats(db: Db, exerciseId: number): Promise<ExerciseStats
        JOIN sessions ses ON ses.id = s.session_id
       WHERE s.exercise_id = ?
         AND s.deleted_at IS NULL
+        AND ${WORKING}
         AND ses.deleted_at IS NULL`,
     [exerciseId],
   )
@@ -1402,6 +1406,7 @@ export function exerciseSessions(
          JOIN sessions ses ON ses.id = s.session_id
         WHERE s.exercise_id = ?
           AND s.deleted_at IS NULL
+          AND ${WORKING}
           AND ses.deleted_at IS NULL
         GROUP BY ses.id
         ORDER BY ses.local_date DESC, ses.id DESC
@@ -1440,8 +1445,12 @@ export function prefillFor(
   exerciseId: number,
   previous?: LastPerformance,
 ): Prefill {
+  // Warm-ups are skipped, or the bar would open the first working set at the
+  // warm-up weight - which is the one number on the screen that is certain to
+  // be wrong. With none left to repeat this falls through to last session,
+  // which is where a first working set has always come from.
   const inSession = sets
-    .filter((s) => s.exerciseId === exerciseId)
+    .filter((s) => s.exerciseId === exerciseId && isWorkingSet(s))
     .sort((a, b) => a.orderIndex - b.orderIndex)
     .at(-1)
 
@@ -1474,11 +1483,28 @@ export function prefillFor(
  */
 const VOLUME_KG = `SUM(CASE
           WHEN s.load_mode = 'assistance' THEN 0
+          WHEN s.set_type = 'warmup' THEN 0
           WHEN s.weight_kg IS NULL OR s.reps IS NULL THEN 0
           ELSE s.weight_kg * s.reps END)`
 
 /** Finished sessions only. The live workout is not part of its own history. */
 const FINISHED = `ses.ended_at_utc IS NOT NULL AND ses.deleted_at IS NULL`
+
+/**
+ * Sets that count. Expects the sets table aliased `s`.
+ *
+ * **Negative, never `= 'working'`.** All 6,209 imported rows carry
+ * `set_type = 'unknown'`, because the export has no such column, so a positive
+ * test would drop five years of history out of every aggregate below. The same
+ * rule in TypeScript is `isWorkingSet` in `logic/session.ts`, and the two are
+ * the same sentence written twice because a screen totalling a list of sessions
+ * cannot pull every set across the bridge to reuse the pure one.
+ *
+ * `VOLUME_KG` above repeats the test rather than relying on this, so a call
+ * site that forgets the filter under-reports nothing: it still gets the volume
+ * right and only the counts go wide.
+ */
+const WORKING = `s.set_type <> 'warmup'`
 
 export interface SessionHistoryRow extends SessionRow {
   setCount: number
@@ -1515,6 +1541,7 @@ export function listSessionHistory(
             ${VOLUME_KG} AS "volumeKg"
        FROM sessions ses
        LEFT JOIN sets s ON s.session_id = ses.id AND s.deleted_at IS NULL
+                       AND ${WORKING}
       WHERE ${FINISHED}
       GROUP BY ses.id
       ORDER BY ses.started_at_utc DESC, ses.id DESC
@@ -1558,10 +1585,10 @@ export function historyStats(
        (SELECT COUNT(*) FROM sessions ses WHERE ${FINISHED}) AS "sessions",
        (SELECT COUNT(*) FROM sets s
           JOIN sessions ses ON ses.id = s.session_id
-         WHERE s.deleted_at IS NULL AND ${FINISHED}) AS "sets",
+         WHERE s.deleted_at IS NULL AND ${WORKING} AND ${FINISHED}) AS "sets",
        (SELECT ${VOLUME_KG} FROM sets s
           JOIN sessions ses ON ses.id = s.session_id
-         WHERE s.deleted_at IS NULL AND ${FINISHED}) AS "volumeKg",
+         WHERE s.deleted_at IS NULL AND ${WORKING} AND ${FINISHED}) AS "volumeKg",
        (SELECT SUM(ses.ended_at_utc - ses.started_at_utc) FROM sessions ses
          WHERE ${FINISHED}) AS "trainedMs",
        (SELECT COUNT(*) FROM sessions ses
@@ -1604,6 +1631,7 @@ export function previousSessionTotals(
             ${VOLUME_KG} AS "volumeKg"
        FROM sessions ses
        LEFT JOIN sets s ON s.session_id = ses.id AND s.deleted_at IS NULL
+                       AND ${WORKING}
       WHERE ${FINISHED}
         AND ses.id != ?
         AND ses.started_at_utc < (SELECT started_at_utc FROM sessions WHERE id = ?)
@@ -1643,6 +1671,7 @@ export function sessionVolumes(db: Db, since: string): Promise<SessionVolumeRow[
             COUNT(s.id) AS "setCount"
        FROM sessions ses
        LEFT JOIN sets s ON s.session_id = ses.id AND s.deleted_at IS NULL
+                       AND ${WORKING}
       WHERE ${FINISHED}
         AND ses.local_date >= ?
       GROUP BY ses.id
@@ -1676,6 +1705,7 @@ export function setsByMuscle(db: Db, since: string): Promise<MuscleSetCount[]> {
        JOIN sessions ses ON ses.id = s.session_id
        JOIN exercises e ON e.id = s.exercise_id
       WHERE s.deleted_at IS NULL
+        AND ${WORKING}
         AND e.deleted_at IS NULL
         AND ${FINISHED}
         AND ses.local_date >= ?
@@ -1707,6 +1737,7 @@ export function setsByMuscleDay(db: Db, since: string): Promise<MuscleDayCount[]
        JOIN sessions ses ON ses.id = s.session_id
        JOIN exercises e ON e.id = s.exercise_id
       WHERE s.deleted_at IS NULL
+        AND ${WORKING}
         AND e.deleted_at IS NULL
         AND ${FINISHED}
         AND ses.local_date >= ?

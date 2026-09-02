@@ -19,7 +19,7 @@
  */
 import type { PerformedSet } from '../db/repo.ts'
 import { formatDuration } from '../logic/entry.ts'
-import { groupByExercise, sessionTotals } from '../logic/session.ts'
+import { groupByExercise, isWorkingSet, sessionTotals } from '../logic/session.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 import { describeSet } from './setText.ts'
 
@@ -93,8 +93,13 @@ export function shareText(
 
   for (const group of groupByExercise(sets)) {
     lines.push('', group.name)
-    for (const [i, set] of group.sets.entries()) {
-      lines.push(`${i + 1}. ${describeSet(set, unit, 'spoken')}`)
+    // Warm-ups are listed but not numbered, and they do not advance the count:
+    // they are outside the plan, so calling one "set 1" would put the working
+    // sets a number out of step with everything else that describes them.
+    let n = 0
+    for (const set of group.sets) {
+      const label = isWorkingSet(set) ? `${++n}.` : 'W.'
+      lines.push(`${label} ${describeSet(set, unit, 'spoken')}`)
     }
   }
 

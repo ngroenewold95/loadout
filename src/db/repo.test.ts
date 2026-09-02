@@ -74,7 +74,12 @@ async function seedExercise(
 async function seedHistory(
   exerciseId: number,
   localDate: string,
-  sets: { weightKg: number | null; reps: number | null; loadMode?: string }[],
+  sets: {
+    weightKg: number | null
+    reps: number | null
+    loadMode?: string
+    setType?: string
+  }[],
   name = 'Day 1',
 ): Promise<number> {
   const startedAt = Date.parse(`${localDate}T17:00:00Z`)
@@ -88,7 +93,7 @@ async function seedHistory(
     await db.exec(
       `INSERT INTO sets (session_id, exercise_id, order_index, set_index, performed_at_utc,
                          weight_kg, reps, load_mode, set_type, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'working', 'native', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?)`,
       [
         sessionId,
         exerciseId,
@@ -98,6 +103,7 @@ async function seedHistory(
         s.weightKg,
         s.reps,
         s.loadMode ?? 'total',
+        s.setType ?? 'working',
         now,
         now,
       ],
@@ -406,6 +412,21 @@ describe('recentPerformance', () => {
     expect(list?.[0].sets.map((s) => s.reps)).toEqual([5, 4])
   })
 
+  it('leaves warm-ups out of the history cards', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 60, reps: 10, setType: 'warmup' },
+      { weightKg: 105, reps: 5 },
+      { weightKg: 105, reps: 4 },
+    ])
+
+    // The card numbers its rows 1 and 2 and lights the one matching the set
+    // about to be done, so a warm-up in there would put every row out of step
+    // with today's slots.
+    const list = (await recentPerformance(db, [squat])).get(squat)
+    expect(list?.[0].sets.map((s) => s.reps)).toEqual([5, 4])
+  })
+
   it('honours the session limit', async () => {
     const squat = await seedExercise('Squat')
     for (const d of ['2026-05-01', '2026-06-01', '2026-07-01', '2026-07-15']) {
@@ -601,6 +622,31 @@ describe('prefillFor', () => {
 
   it('reports "none" rather than guessing for a brand new exercise', () => {
     expect(prefillFor([], 999, undefined).source).toBe('none')
+  })
+
+  it('never repeats a warm-up', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-07-15', [{ weightKg: 105, reps: 5 }])
+    const previous = (await recent(db, [squat])).get(squat)
+
+    const session = await startSession(db)
+    const warmup = await logSet(db, {
+      sessionId: session,
+      exerciseId: squat,
+      weightKg: 60,
+      reps: 10,
+    })
+    await updateSet(db, warmup, { setType: 'warmup' })
+
+    // With only a warm-up logged the bar falls back to last session, which is
+    // where a first working set has always come from. Opening at 60 would be
+    // the one number on the screen certain to be wrong.
+    const sets = await listSessionSets(db, session)
+    expect(prefillFor(sets, squat, previous)).toMatchObject({
+      weightKg: 105,
+      reps: 5,
+      source: 'last-session',
+    })
   })
 })
 
@@ -867,6 +913,46 @@ describe('templates and picker', () => {
     expect(row.volumeKg).toBe(totals.volumeKg)
     expect(row.volumeKg).toBe(500)
     expect(row.setCount).toBe(totals.sets)
+  })
+
+  it('leaves warm-ups out of the SQL totals, exactly as sessionTotals does', async () => {
+    const squat = await seedExercise('Squat')
+    const sessionId = await seedHistory(squat, '2026-07-15', [
+      { weightKg: 60, reps: 10, setType: 'warmup' },
+      { weightKg: 100, reps: 5 },
+      { weightKg: 100, reps: 5 },
+    ])
+
+    const [row] = await listSessionHistory(db, { limit: 1 })
+    const totals = sessionTotals(await listSessionSets(db, sessionId))
+
+    expect(row.setCount).toBe(totals.sets)
+    expect(row.setCount).toBe(2)
+    expect(row.volumeKg).toBe(totals.volumeKg)
+    expect(row.volumeKg).toBe(1000)
+    // Still returned by the read the summary uses: a warm-up happened, it just
+    // counts toward nothing.
+    expect(await listSessionSets(db, sessionId)).toHaveLength(3)
+  })
+
+  /**
+   * The one that guards the whole feature.
+   *
+   * Every one of the 6,209 imported rows carries `set_type = 'unknown'`, so a
+   * filter written as `set_type = 'working'` would have dropped five years of
+   * history out of every total on the day warm-ups shipped, silently and with
+   * no error anywhere.
+   */
+  it('counts imported rows, which carry set_type unknown', async () => {
+    const squat = await seedExercise('Squat')
+    await seedHistory(squat, '2026-07-15', [
+      { weightKg: 100, reps: 5, setType: 'unknown' },
+      { weightKg: 100, reps: 5, setType: 'unknown' },
+    ])
+
+    const [row] = await listSessionHistory(db, { limit: 1 })
+    expect(row.setCount).toBe(2)
+    expect(row.volumeKg).toBe(1000)
   })
 
   it('reports lifetime totals and cadence from one statement', async () => {

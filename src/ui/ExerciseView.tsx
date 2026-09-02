@@ -72,7 +72,7 @@ import {
   openingEntry,
 } from '../logic/entry.ts'
 import { nextLoadStep, shouldIncreaseLoad } from '../logic/plan.ts'
-import { isComplete, nextIncompleteIndex } from '../logic/session.ts'
+import { isComplete, isWorkingSet, nextIncompleteIndex } from '../logic/session.ts'
 import { setSlots, type SetSlot } from '../logic/slots.ts'
 import { useNav } from '../state/nav.ts'
 import { useEntryDraft, useExerciseIndex, useWorkout } from '../state/workout.ts'
@@ -183,8 +183,12 @@ export function ExerciseView({ session, openAt }: Props) {
   // before either column had a reader.
   const weightStep = stepForExercise(current?.incrementKg, settings?.weightIncrementKg, unit)
 
+  // Working sets only: a warm-up must not move the fraction in the header or
+  // satisfy the target, or three of them would auto-advance past an exercise
+  // that was never actually worked.
   const doneHere = useMemo(
-    () => (sets ?? []).filter((s) => s.exerciseId === current?.exerciseId),
+    () =>
+      (sets ?? []).filter((s) => s.exerciseId === current?.exerciseId && isWorkingSet(s)),
     [sets, current],
   )
   // The most recent session is what prefills; the pages stack all of them.
@@ -211,6 +215,9 @@ export function ExerciseView({ session, openAt }: Props) {
   const durationS = draft?.durationS ?? null
   /** The set the entry bar is pointed at, or null when it is entering a new one. */
   const editingSetId = draft?.editingSetId ?? null
+  const editingIsWarmup =
+    editingSetId != null &&
+    (sets ?? []).find((s) => s.id === editingSetId)?.setType === 'warmup'
 
   // `patchDraft` marks the draft touched, which is what makes it survive a
   // push. Every one of these is a hand edit, so that is exactly right.
@@ -505,6 +512,25 @@ export function ExerciseView({ session, openAt }: Props) {
     clearDraft()
   }
 
+  /**
+   * Move the selected set between warm-up and working.
+   *
+   * The draft is dropped afterwards because the row moves: a set marked
+   * warm-up leaves the slots for the warm-up list above them, and leaving the
+   * bar aimed at it would show `SAVE` over a row that is no longer where the
+   * eye left it. `setSlots` already ignores an `editingSetId` matching nothing,
+   * so this is about what the screen says rather than about correctness.
+   */
+  const handleToggleWarmup = async () => {
+    if (editingSetId == null) return
+    await updateSet.mutateAsync({
+      setId: editingSetId,
+      sessionId: session.id,
+      patch: { setType: editingIsWarmup ? 'working' : 'warmup' },
+    })
+    clearDraft()
+  }
+
   const handleDelete = async () => {
     if (editingSetId == null) return
     // The repo closes the numbering gap a middle delete leaves, so the slots
@@ -577,7 +603,9 @@ export function ExerciseView({ session, openAt }: Props) {
             other than a neighbour is what the overview is for. */}
         <div className="mt-3 flex gap-1 px-5 pb-1" aria-hidden="true">
           {planned.map((p, i) => {
-            const count = (sets ?? []).filter((s) => s.exerciseId === p.exerciseId).length
+            const count = (sets ?? []).filter(
+              (s) => s.exerciseId === p.exerciseId && isWorkingSet(s),
+            ).length
             const complete = p.targetSets != null && count >= p.targetSets
             return (
               <span
@@ -695,6 +723,21 @@ export function ExerciseView({ session, openAt }: Props) {
                 onClick={clearDraft}
               >
                 Cancel
+              </button>
+              {/* Warm-up lives here rather than beside LOG SET, for the same
+                  reason `Note` does: this row only exists while a slot is
+                  selected, so the docked bar's geometry never changes under a
+                  thumb mid-set. A warm-up is therefore logged like any other
+                  set and then marked, which also means the toggle works on a
+                  set logged five minutes ago. */}
+              <button
+                className={`px-2 py-1 ${
+                  editingIsWarmup ? 'text-primary' : 'text-text-dim active:text-text'
+                }`}
+                disabled={busy}
+                onClick={handleToggleWarmup}
+              >
+                Warm-up
               </button>
               <button
                 className="text-text-dim active:text-text px-2 py-1"
@@ -820,10 +863,18 @@ function ExercisePage({
   onPickHistory: (set: PerformedSet) => void
 }) {
   const unit: Unit = planned.preferredUnit
-  const done = useMemo(
+  const mine = useMemo(
     () => sets.filter((s) => s.exerciseId === planned.exerciseId),
     [sets, planned.exerciseId],
   )
+  const done = useMemo(() => mine.filter(isWorkingSet), [mine])
+  const warmups = useMemo(() => mine.filter((s) => !isWorkingSet(s)), [mine])
+  /**
+   * `setSlots` needs no filtering of its own and gets none: it sorts by
+   * `setIndex` and then places by position in the sorted array, so passing only
+   * the working sets numbers them 1, 2, 3 even though `logSet` left holes in
+   * `set_index` where the warm-ups are.
+   */
   const slots = useMemo(
     () => setSlots(done, planned.targetSets ?? null, editingSetId),
     [done, planned.targetSets, editingSetId],
@@ -878,6 +929,27 @@ function ExercisePage({
       {/* Today's sets first: what you are about to do outranks what you did in
           July, and it is what the thumb reaches for to correct a set. */}
       <div className="flex flex-col gap-2">
+        {/* Warm-ups sit ABOVE the numbered slots and outside them, because
+            they are outside the plan: they carry no set number, satisfy no
+            target and count toward nothing. They stay tappable so the mark can
+            be taken off again, which is the only way back. */}
+        {warmups.map((set) => (
+          <button
+            key={set.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelectSet(set.id)}
+            className={`flex items-center gap-3 rounded-xl py-2 pr-1 pl-3 text-left ${
+              set.id === editingSetId ? 'ring-primary bg-surface-1 ring-2' : ''
+            }`}
+          >
+            <span className="bg-muted text-text-dim flex size-7 shrink-0 items-center justify-center rounded-full text-[0.6rem] font-semibold tracking-wide">
+              W
+            </span>
+            <span className="text-text-dim tabular-nums">{describeSet(set, unit)}</span>
+          </button>
+        ))}
+
         {slots.map((slot) => (
           <SlotRow
             key={slot.set?.id ?? `empty-${slot.index}`}
