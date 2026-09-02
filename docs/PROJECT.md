@@ -4,9 +4,10 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-08-26 (stages 17 to 20 verified on device: mid-workout
-reachability, progression prefill, the assisted split, trends. Demoing to other
-people starts the week of 2026-08-31, which reorders what comes next.)
+Last updated: 2026-09-01 (stages 23 to 34 - the demo batch - built with the
+phone disconnected and then **verified on device in one session**, which found
+two calendar faults and fixed them. Stage 22, the fabricated demo database, was
+dropped: the demo runs on the real data.)
 
 ---
 
@@ -2190,6 +2191,253 @@ check the pushed file's timestamp before copying it into `databases/`.
 
 ---
 
+## Stages 24 to 34 - DONE, VERIFIED ON DEVICE
+
+The demo batch, built 2026-08-26 with the phone disconnected, the same way
+stages 17 to 20 were, and **proved on the phone on 2026-09-01** in one session
+of screenshots. Every row of the device table at the end of this section passed;
+two faults were found there and fixed on the spot, both in the calendar.
+
+The goal that ordered it: showing the app to other people from the week of
+2026-08-31. Everything here is either a wrong statement removed from a screen,
+or a question an audience asks that the app could not answer.
+
+### Stage 22 is dropped, and this records why
+
+`PROJECT.md` said, under "Data safety" and as stage 22, that the app must not be
+demoed on the real database, because `sets.notes` carries the medical notes from
+`Set Comment`. **The user withdrew that on 2026-08-26**: this is a single-user
+app, the developer's own data on the developer's own phone, and the people who
+will see it are being shown something rather than handed an install. The
+fabricated device database was therefore never built, and `src/db/devSeed.ts`
+stays exactly what it was - the browser seed for `npm run dev`, unchanged.
+
+The rule is recorded rather than deleted, because it was written from a true
+reading of the data. What changed is the audience, not the notes.
+
+### 24. An unfinished workout is not a finished one
+
+`listTemplates` computed `lastUsedDate` with no `ended_at_utc` filter, so
+**starting** a workout moved Home's `last done` to today and handed the A/B
+rotation to the other template before a single set was logged. Measured on the
+phone on 2026-08-26. The condition every other history read already uses is now
+in that subquery too, and `repo.test.ts` starts a session, asserts nothing moved,
+ends it, and asserts both the date and the rotation then follow.
+
+The second blemish from that session, `Chest Dip` rendering `BEST -`, is fixed by
+stage 25 rather than patched here.
+
+### 25. Best set, out of the series the chart already draws
+
+`bestOf` in `logic/trend.ts` takes the `TrendSeries` and returns its best point
+with the date. **No new query, and no second opinion about what "best" means**:
+`trendSeries` had already decided the measure per exercise, so the tile and the
+chart cannot disagree. Assistance takes the lowest point, everything else the
+highest, and a tie goes to the earliest session - the date then answers "when
+was this first reached" rather than "when was it last repeated".
+
+That is what makes `BEST -` impossible rather than hidden: a bodyweight exercise
+with no weight in five years has a rep series, so it reads `MOST REPS 12`.
+
+**Known limit, stated because it is not obvious:** the series comes from
+`exerciseSessions`, which is capped at 200 sessions. No exercise reaches that
+today (343 sessions exist in total, across 87 exercises), but the best set is
+strictly "best of the last 200 sessions" and would quietly become wrong first.
+
+### 26, 27, 28. The summary tells the truth, and can leave the app
+
+The summary grouped every set by exercise and then rendered `group.sets.length`
+and nothing else, so a 22-set workout read as `3 sets` eleven times. The sets are
+listed now, numbered the way the history cards number them, through the same
+`describeSet` every other screen uses.
+
+`sessionTotals` gained `reps`, and it counts **assistance too**: a rep is a rep
+whichever direction the load runs, which is exactly the thing volume cannot say.
+Home's tiles are 2 x 2 now rather than a row of three.
+
+`Copy` puts the whole workout on the clipboard as text, patterned on the
+reference app's share button. Two deliberate differences from it: volume is
+stated in `lb` rather than tons, because this is an lb app and a unit nobody
+trains in is a worse headline than a bigger number; and assistance stays out of
+the volume line while its reps stay in the rep line.
+
+- `ui/shareText.ts` is pure and tested - the format is provable without a phone,
+  a database or a clipboard. `logic/session.ts` gained `groupByExercise` so the
+  screen and the text cannot drift apart.
+- **No plugin.** Capacitor serves the app from `https://localhost`, a secure
+  context, so `navigator.clipboard` is available; `copyText` falls back to the
+  older `execCommand('copy')` path rather than trusting that. Which of the two
+  actually runs on the device is **unverified** and is the one thing this stage
+  most needs the phone for.
+- The button sits **outside** the docked action bar, because that bar is hidden
+  once a session is finished and a past workout is the one most worth sending.
+
+### 23. Home carries a trend
+
+Twelve weeks of volume as a row of bars, and this four weeks against the previous
+four. `logic/volume.ts` is pure: `weeklyVolume` buckets sessions into Monday
+weeks and `periodOverPeriod` compares the two windows.
+
+- **A week with no training draws as zero, not as a gap.** Dropping it would run
+  the line straight over a fortnight off and claim the volume held, which is the
+  one thing the trend is read to find out. This is deliberately the opposite of
+  `trendSeries`, which drops a session carrying no plottable number.
+- **Bucketing is in TypeScript, not SQL.** `local_date` is a string and
+  `logic/dates.ts` already owns the Monday rule the cadence line uses; a second
+  definition written in SQLite date functions would be free to disagree with it.
+  `sessionVolumes` is one statement returning one row per finished session.
+- **No `recharts` here.** Twelve numbers with no axis, no tooltip and no unit to
+  label do not need a chart library, and the muscle balance below it is already
+  a bar built from plain elements.
+- It sits under `Ready for more load`, which stays first. The ordering rule on
+  Home is actionable before impressive.
+
+### 29. What this workout was, against the last one
+
+`previousSessionTotals` finds the last finished session of the same workout -
+**by template link OR by name**, the pair `listTemplates` already matches on,
+because five years of imported history carries only a name. The summary reads
+`vs 2026-08-10 · +680 lb · +0 sets · +3 reps`. The first performance of a
+template has nothing before it, and null is the answer rather than a failure.
+
+### 30. The launcher icon, chosen and installed
+
+The scaffold's Capacitor mark is gone. The chosen one is `e12`: a long bar with
+heavy plates and softened corners, on the same 45 degrees the Capacitor mark
+sat at, in `#002a77` and `#b4c5ff` out of `src/index.css`. It was picked by
+looking at candidates side by side at 84, 48 and 28 px and under the circle
+mask, the same way the identity mark was chosen in stage 11a. Every candidate
+that survived is in `design/icons/`.
+
+**There is no rasteriser on this machine** - no ImageMagick, no Inkscape, no
+`sharp` - so `scripts/make-icons.mjs` is the whole toolchain: Node's `zlib`,
+a hand-written PNG encoder, and the mark's geometry as five rectangles. It
+writes all fifteen files:
+
+- `ic_launcher_foreground.png` per density, the art alone on transparency
+  across the full 108 dp canvas, which is what the adaptive icon composites
+  over `values/ic_launcher_background.xml` (now `#002A77`, was `#FFFFFF`).
+- `ic_launcher.png` and `ic_launcher_round.png` per density, for API 24 and 25.
+  `minSdkVersion` is 24, and those launchers mask nothing themselves, so the
+  script zooms to the safe square the way an adaptive icon is cut down and
+  applies the rounded-square or circle mask itself.
+
+**The splash screen came with it.** It was the Capacitor artwork in twelve PNGs
+across `drawable-port-*` and `drawable-land-*`; it is now one
+`drawable/splash.xml`, the launcher icon's own two parts - the blue as a layer,
+the foreground centred over it - so the cold start and the home screen agree.
+Android 12 and up ignores the window background and draws its own splash from
+`windowSplashScreenBackground` and `windowSplashScreenAnimatedIcon`, so
+`styles.xml` sets those too and both paths look the same.
+
+Three Capacitor leftovers went with it, each checked for references first and
+each having none: the twelve splash PNGs, `drawable-v24/ic_launcher_foreground.xml`
+(the old mark as a vector, unused since the adaptive icon points at the mipmap
+PNG) and `drawable/ic_launcher_background.xml` (the old grid, unused since the
+background is a colour).
+
+**Verified on device 2026-09-01:** the launcher's own circle mask cuts it
+cleanly in the app drawer, and the cold start is the same blue with the mark
+centred.
+
+### 31 to 34. The offline batch, taken while the phone was away
+
+Four more built the same way, with the same caveat: **none of it is verified on
+device**.
+
+**31. An exercise added by hand can complete.** Adding one mid-session wrote a
+row with no `target_sets`, and `isComplete` says - correctly, and on purpose -
+that a null target is never complete. Auto-advance therefore kept returning to
+it and only `Finish` ended the workout. Recorded as a rough edge when the picker
+was built in stage 9 and fixed here: `defaultTargetSets` takes the most common
+target among the workout's other exercises, ties going to the **smaller**
+number, and the session picker passes it. Adding an exercise means "one more of
+these", so it inherits what the rest of the workout is doing. Null stays
+possible, for a workout where nothing has a target at all, and then the honest
+answer really is that nobody decided.
+
+**32. A year of training, as a grid.** `TrainingCalendar.tsx`, reached from
+`Calendar` beside `All workouts` on Home. One square per day for 53 weeks,
+shaded in four steps against the window's busiest day, and a tapped day says its
+sets and volume and offers to open the workout.
+
+- `calendarDays` returns **every** day in the window, trained or not. A calendar
+  drawn only from the days that happened has nothing to say; the gaps are the
+  content. `calendarGrid` cuts the run into columns of seven and pads the short
+  last week, so nothing in the component reasons about a ragged end.
+- No new query: `sessionVolumes` gained `sessionId` and `setCount`, which is
+  what lets a square open its workout.
+- Squares rather than `recharts`, for the same reason the volume sparkline is
+  plain elements: 371 divs need no axis, no tooltip and no library.
+
+**33. Notes, finally writable.** `sessions.notes` and `sets.notes` have been in
+the schema since the first migration, the import fills both, and nothing in the
+app could write either.
+
+- The workout note is on the summary, edited in place, saved on a tap rather
+  than on every keystroke - a write per character is a write per character
+  across the bridge. `setSessionNotes` stores a blank as **NULL**, because a
+  note nobody typed and a note somebody cleared are the same thing.
+- The set note is behind `Note` in the entry bar's edit row, opening an
+  `ActionSheet`. It is not in the bar itself: the bar is two numbers and a
+  button, and nothing may grow under a thumb mid-set. `updateSet` already
+  patched `notes` and had no caller for it.
+- A set's note renders under its row on the summary, which is where the
+  imported machine-base and plate-breakdown notes finally become visible.
+- **Deliberately not in the share text.** Copying a workout should not quietly
+  copy what was written about the body performing it.
+
+**34. Muscle balance over time.** Under Home's 28-day bar, twelve weekly stacked
+columns. Each column is scaled to its own total so the shape can be compared,
+and its height is its share of the busiest week so a light week still reads
+light. **Sets, not volume**, the same choice the bar above it makes and for the
+same reason. `setsByMuscleDay` is the one new statement; `muscleWeeks` rolls the
+days into Monday weeks in TypeScript, where `startOfWeek` already lives.
+
+### Measured on device, 2026-09-01, screenshot before every tap
+
+| Stage | What was seen |
+|---|---|
+| 24 | Started a Day B workout on 2026-09-01, opened Home: still `Next up Day B · not done yet`, Day A still `last done 2026-08-26`, cadence still `0 this week`. Before the fix Home would have claimed today and handed the rotation to Day A |
+| 25 | `Chest Dip` reads `MOST REPS 12 · 2025-02-04`; `Assisted Pullup` reads `LEAST ASSIST 25 lb · 2025-03-11` with the axis inverted. The dash is gone |
+| 27, 28 | A 2025-12-02 session lists every set under its exercise (`1 205 × 8`), `SETS 14`, `REPS 120`, `VOLUME 26155 lb` |
+| 26 | `Copy` flipped to `Copied` and Android's own clipboard chip showed `Day 2 / 2 Dec 7:56 AM / 1:02:43…`, so the text really landed. **Which of the two paths ran is still unknown** - the chip does not say, and nothing logs it |
+| 23 | `VOLUME · 12 WEEKS` draws, `-10% vs previous 4 weeks`, `62k lb in 4 weeks, after 69k lb`. The two agree: 62/69 is -10.1% |
+| 29 | `vs 2025-11-18 · +920 lb · -2 sets · -5 reps` on the 2025-12-02 session |
+| 30 | The mark in the launcher drawer, circle-masked, beside Lime and Lyft; and the cold start is the full-bleed `#002A77` with the mark centred |
+| 31 | `Assisted Pullup` added mid-workout arrived as `2 sets · 0/2 sets · rest 3:15`, and the database shows `target_sets = 2` inherited. Logged a set and the slots behaved |
+| 32 | `The last year · 90 days trained · 1432 sets`, a tapped day reading `2025-12-02 · 9 months ago · 22 sets · 32k lb`, and `Open the workout` landing on that summary |
+| 33 | A set note (`stack plus 5lb plate`) renders italic under its row on the summary; a workout note (`felt strong, shoulder fine`) survived `am kill` and was confirmed in the database |
+| 34 | The weekly stacked columns draw under the 28-day bar, colours matching the legend |
+
+### What the device session found, and it was both in the calendar
+
+**It opened on last autumn.** Fifty-three columns do not fit a phone and the
+grid runs oldest to newest, so the default scroll position showed a year ago and
+this week was off the right edge - the only part anyone opens the screen for. A
+layout effect now sets `scrollLeft = scrollWidth` before paint, keyed on the row
+count so it re-runs when the data arrives and the grid first has width.
+
+**Scrolling took the axis with it.** The `M W F S` column was inside the
+scroller, so scrolling to this week carried the one part that has to stay put
+off the left edge. It sits outside the scroller now.
+
+Both re-measured after the fix: the calendar opens with today's outlined square
+at the right edge and the weekday labels pinned.
+
+### Two limits worth stating, neither a bug
+
+- **The delta line needs two sessions of the same name.** Today's `Day B - RDL`
+  showed none, because the imported history calls that workout `RDL` and
+  `previousSessionTotals` matches on template link OR name. It appears from the
+  second session under the new names onward, which is what the 2025-12-02 row
+  above demonstrates.
+- **An exercise added by hand reads `2 sets · 0/2 sets`** in the overview,
+  because it inherits a set count but no rep range and the header prints both.
+  Honest, slightly redundant.
+
+---
+
 ## The cutover procedure
 
 **Written down, not performed.** The device database is still disposable and
@@ -2330,35 +2578,40 @@ it reorders the work: the cutover makes the app the user's own logger, and a
 demo makes it something a stranger holds. **The two want opposite things from
 the database.**
 
-22. **A demo database, and it is the blocking one.** `sets.notes` carries the
-    medical notes and the named third party out of `Set Comment`, and the phone
-    that would be demoed holds the real export. A session summary or an exercise
-    history is one tap from showing them. `db/devSeed.ts` already fabricates
-    history for `npm run dev` and is fenced to web and dev, so the work is to
-    produce a **device-installable fabricated database** from the same seed:
-    five years deep, exercise names from the committed `plan.ts`, no row derived
-    from `Examples/`. It is also repeatable, which a demo wants anyway - the
-    same numbers on stage every time.
-23. **Home carries no trend.** The chart is one screen deep in exercise detail,
-    and Home is the first thing anyone sees. A volume-per-week sparkline and a
-    period-over-period line reuse the series primitive from stage 20 and the SQL
-    rollup shape from stage 11c. Highest visible payoff per hour of anything
-    below.
-24. **Two blemishes measured on the phone on 2026-08-26**, both on screen during
-    a demo. `Chest Dip` renders `BEST -`, because bodyweight work has no weight
-    to be best at and the tile does not branch the way the chart already does;
-    it should read most reps. And Home said `last done 2026-08-26` for a session
-    that was still in progress, so an unfinished workout counts as a finished
-    one in `nextTemplate`.
-25. **A best set per exercise, with its date.** The first question an audience
-    asks a lifting app. It is deliberately **not** an e1RM or a strength score:
-    Epley is wrong at 1 rep (141 rows), unreliable above 10 (844), incoherent
-    for duration and distance, and inverts for assistance. A best set branching
-    on `tracking_type` is honest and is already half-built - `exerciseStats`
-    returns `bestWeightKg` and `leastAssistKg` today.
+22. ~~**A demo database, and it is the blocking one.**~~ **Dropped on
+    2026-08-26.** The demo runs on the real database: this is a single-user app,
+    the developer's own data on the developer's own phone, and the audience is
+    being shown something rather than handed an install. See "Stages 24 to 30"
+    for the record. `db/devSeed.ts` stays what it was, the browser seed for
+    `npm run dev`.
+23. ~~**Home carries no trend.**~~ **Built 2026-08-26, not yet on the phone.**
+    Twelve weeks of volume as bars, plus four weeks against the previous four.
+24. ~~**Two blemishes measured on the phone on 2026-08-26.**~~ **Both built.**
+    The `BEST -` on bodyweight work is fixed by 25 rather than patched, and an
+    unfinished workout no longer counts as a finished one in `nextTemplate`.
+25. ~~**A best set per exercise, with its date.**~~ **Built**, out of the same
+    series the chart draws rather than a new query. Still not an e1RM or a
+    strength score, for the reasons recorded above.
+26. **Share a workout as text.** Built: `Copy` on the summary, patterned on the
+    reference app's share button. Volume in `lb` rather than tons.
+27. **The summary lists the sets**, not a count per exercise.
+28. **A reps tile**, and `sessionTotals` counts reps including assistance.
+29. **Session-over-session deltas on the summary.** Built.
+30. **A launcher icon.** Chosen (`e12`) and installed across all five densities
+    by `scripts/make-icons.mjs`, which renders PNGs with no image tooling at
+    all. Not yet seen on a home screen.
 
-Order: 22, then 23, then 24. 25 only if the week allows. The cutover is
-unaffected and stays a separate decision.
+31. **An exercise added by hand can complete**, so auto-advance no longer
+    returns to it forever. The rough edge stage 9 recorded.
+32. **A year of training as a calendar**, reached from Home.
+33. **Notes from inside the app**, on a workout and on a set.
+34. **Muscle balance over time**, twelve weekly columns under Home's 28-day bar.
+
+Everything from 23 to 34 was built with the phone disconnected on 2026-08-26 and
+**all of it was verified on device on 2026-09-01**, which also found and fixed
+two faults in the calendar. The cutover is unaffected and stays a
+separate decision; the user is logging in Progression in tandem, so the device
+database stays disposable and `npm run import` keeps working.
 
 ### Not blocking cutover
 
@@ -2551,10 +2804,15 @@ notes say what each one would cost or collide with, where that is known.
   the source export and contains medical notes and a named third party. A
   narrower pattern than `/db/` previously let `loadout.sqlite-shm` through -
   verify with `git check-ignore -v` after touching ignore rules.
-- **Do not demo the app on the real database.** `sets.notes` carries those
-  medical notes onto the phone, and a session summary or an exercise history
-  reaches them in one tap in front of whoever is watching. The fabricated demo
-  database is stage 22 above and it blocks demoing, not the other way round.
+- ~~**Do not demo the app on the real database.**~~ **Withdrawn by the user on
+  2026-08-26**, and kept here rather than deleted because the reading behind it
+  was true: `sets.notes` does carry the medical notes onto the phone, and a
+  session summary or an exercise history reaches them in one tap. What changed
+  is the audience - this is a single-user app being shown, not distributed, and
+  the user judges the risk to be none. The fabricated demo database of stage 22
+  was therefore never built. **This does not relax anything else on this list**:
+  `Examples/` and `db/` stay gitignored, and nothing derived from them may be
+  committed or packaged.
 - Migrations are numbered and never edited once applied. **Both runners take a
   copy first**: `scripts/migrate.ts` copies the file on the laptop, and
   `src/db/backup.ts` runs `VACUUM INTO` on device before `open.ts` applies
