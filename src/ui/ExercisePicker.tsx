@@ -18,6 +18,7 @@ import {
   useTemplateExercises,
 } from '../state/queries.ts'
 import { relativeDay } from '../logic/dates.ts'
+import { defaultTargetSets } from '../logic/session.ts'
 import { localDateOf } from '../db/repo.ts'
 import { useNav } from '../state/nav.ts'
 import { GroupRail, GroupWord } from './GroupTag.tsx'
@@ -52,7 +53,14 @@ export function SessionExercisePicker({
         if (replacing != null) {
           await replace.mutateAsync({ exerciseId: replacing, withExerciseId: exerciseId })
         } else {
-          await add.mutateAsync({ exerciseId })
+          // Inherit the workout's own set count rather than adding a row with
+          // no target: an exercise nothing decided a target for can never be
+          // complete, so auto-advance would keep returning to it and only
+          // `Finish` would end the workout.
+          await add.mutateAsync({
+            exerciseId,
+            targetSets: defaultTargetSets(planned ?? []),
+          })
         }
         back()
       }}
