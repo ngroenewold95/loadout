@@ -39,6 +39,40 @@ export function isComplete(planned: Targeted, setCount: number): boolean {
 }
 
 /**
+ * How many sets an exercise added by hand should ask for.
+ *
+ * **The rest of this workout's answer, not a constant.** An exercise added
+ * mid-session with no target could never be complete - `isComplete` says so
+ * above, deliberately - so auto-advance kept returning to it and only `Finish`
+ * ended the workout. That was recorded as a rough edge when the picker was
+ * built and this is the fix: adding an exercise means "one more of these",
+ * so it inherits what everything else here is doing.
+ *
+ * The most common target wins, ties going to the smaller number, because
+ * over-asking traps the workout again in a smaller way: a target of 3 among
+ * twos leaves an exercise that reads incomplete after the sets that were
+ * actually wanted. Null only when nothing in the workout has a target at all,
+ * and then the honest answer really is "nobody decided".
+ */
+export function defaultTargetSets(planned: readonly Targeted[]): number | null {
+  const counts = new Map<number, number>()
+  for (const exercise of planned) {
+    if (exercise.targetSets == null) continue
+    counts.set(exercise.targetSets, (counts.get(exercise.targetSets) ?? 0) + 1)
+  }
+
+  let best: number | null = null
+  let bestCount = 0
+  for (const [target, count] of counts) {
+    if (count > bestCount || (count === bestCount && best != null && target < best)) {
+      best = target
+      bestCount = count
+    }
+  }
+  return best
+}
+
+/**
  * Where logging the last set of exercise `from` should move to.
  *
  * **The next INCOMPLETE exercise, not `from + 1`.** Going back to add a set to
@@ -80,6 +114,14 @@ export interface SessionTotals {
   exercises: number
   /** Sum of weight × reps, in kg. See below for what is deliberately left out. */
   volumeKg: number
+  /**
+   * Every rep performed, assistance included.
+   *
+   * Unlike volume, a rep is a rep whichever direction the load runs, so an
+   * Assisted Chinup contributes its reps here and nothing to the volume above.
+   * A set logged by duration or distance carries no reps and adds nothing.
+   */
+  reps: number
 }
 
 /**
@@ -95,14 +137,61 @@ export interface SessionTotals {
  */
 export function sessionTotals(sets: readonly Totalled[]): SessionTotals {
   let volumeKg = 0
+  let reps = 0
   const exercises = new Set<number>()
 
   for (const set of sets) {
     exercises.add(set.exerciseId)
+    reps += set.reps ?? 0
     if (set.loadMode === 'assistance') continue
     if (set.weightKg == null || set.reps == null) continue
     volumeKg += set.weightKg * set.reps
   }
 
-  return { sets: sets.length, exercises: exercises.size, volumeKg }
+  return { sets: sets.length, exercises: exercises.size, volumeKg, reps }
+}
+
+/** The least a set has to be to be grouped under its exercise. */
+interface Groupable {
+  exerciseId: number
+  exerciseName: string
+  primaryMuscle: string | null
+}
+
+export interface ExerciseGroup<T> {
+  exerciseId: number
+  name: string
+  primaryMuscle: string | null
+  sets: T[]
+}
+
+/**
+ * A session's sets, gathered under each exercise in the order performed.
+ *
+ * The summary screen and the share text both need this and must not disagree
+ * about it, which is the same argument that put `describeSet` in one place.
+ *
+ * **The order is first-performed, not sorted.** `order_index` follows what
+ * actually happened, so a superset interleaves truthfully in the rows; grouping
+ * by first appearance lists each exercise once without pretending the sets came
+ * in blocks.
+ */
+export function groupByExercise<T extends Groupable>(
+  sets: readonly T[],
+): ExerciseGroup<T>[] {
+  const groups: ExerciseGroup<T>[] = []
+  for (const set of sets) {
+    let group = groups.find((g) => g.exerciseId === set.exerciseId)
+    if (!group) {
+      group = {
+        exerciseId: set.exerciseId,
+        name: set.exerciseName,
+        primaryMuscle: set.primaryMuscle,
+        sets: [],
+      }
+      groups.push(group)
+    }
+    group.sets.push(set)
+  }
+  return groups
 }

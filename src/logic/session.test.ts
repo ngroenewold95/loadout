@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { isComplete, nextIncompleteIndex, sessionTotals } from './session.ts'
+import {
+  defaultTargetSets,
+  groupByExercise,
+  isComplete,
+  nextIncompleteIndex,
+  sessionTotals,
+} from './session.ts'
 
 const plan = (targets: (number | null)[]) =>
   targets.map((targetSets, i) => ({ exerciseId: i + 1, targetSets }))
@@ -78,6 +84,17 @@ describe('sessionTotals', () => {
     expect(totals.volumeKg).toBe(100 * 5 + 100 * 5 + 100 * 10)
   })
 
+  it('counts every rep, assistance included', () => {
+    // A rep is a rep whichever direction the load runs, which is exactly what
+    // volume cannot say. Duration and distance work carries no reps at all.
+    const totals = sessionTotals([
+      set({ reps: 8 }),
+      set({ loadMode: 'assistance', weightKg: 50, reps: 6 }),
+      set({ weightKg: null, reps: null }),
+    ])
+    expect(totals.reps).toBe(14)
+  })
+
   it('excludes assistance from volume but still counts the set', () => {
     // A higher assistance number is an EASIER set, so adding it to volume would
     // make progress read as decline. The set is still work that was done.
@@ -97,6 +114,59 @@ describe('sessionTotals', () => {
   })
 
   it('is zero for an empty session', () => {
-    expect(sessionTotals([])).toEqual({ sets: 0, exercises: 0, volumeKg: 0 })
+    expect(sessionTotals([])).toEqual({ sets: 0, exercises: 0, volumeKg: 0, reps: 0 })
+  })
+})
+
+describe('defaultTargetSets', () => {
+  it('takes what the rest of the workout is doing', () => {
+    expect(defaultTargetSets(plan([2, 2, 3]))).toBe(2)
+  })
+
+  it('breaks a tie on the smaller number, so the added exercise cannot over-ask', () => {
+    expect(defaultTargetSets(plan([2, 3]))).toBe(2)
+  })
+
+  it('ignores exercises that carry no target', () => {
+    expect(defaultTargetSets(plan([null, 4, null, 4, 2]))).toBe(4)
+  })
+
+  /** Nobody decided, so nothing is claimed. */
+  it('is null when nothing in the workout has a target', () => {
+    expect(defaultTargetSets(plan([null, null]))).toBeNull()
+    expect(defaultTargetSets([])).toBeNull()
+  })
+})
+
+describe('groupByExercise', () => {
+  const set = (exerciseId: number, exerciseName: string, id: number) => ({
+    id,
+    exerciseId,
+    exerciseName,
+    primaryMuscle: null,
+  })
+
+  /**
+   * Order is first performed, not sorted: `order_index` follows what actually
+   * happened, so a superset has to interleave truthfully in the rows while
+   * each exercise is still listed once.
+   */
+  it('gathers a superset under two headings, in the order they were started', () => {
+    const groups = groupByExercise([
+      set(1, 'Squat', 1),
+      set(2, 'Press', 2),
+      set(1, 'Squat', 3),
+      set(2, 'Press', 4),
+    ])
+
+    expect(groups.map((g) => g.name)).toEqual(['Squat', 'Press'])
+    expect(groups.map((g) => g.sets.map((s) => s.id))).toEqual([
+      [1, 3],
+      [2, 4],
+    ])
+  })
+
+  it('is empty for a session with no sets', () => {
+    expect(groupByExercise([])).toEqual([])
   })
 })
