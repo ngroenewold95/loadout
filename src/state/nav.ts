@@ -70,6 +70,8 @@ export type Screen =
   | { kind: 'exercise'; sessionId: number; index: number }
   /** Every finished workout, newest first. Rows open the summary. */
   | { kind: 'history' }
+  /** A year of training as a grid of days. A trained day opens its workout. */
+  | { kind: 'calendar' }
   /** All 87 exercises. Rows open the detail screen rather than picking one. */
   | { kind: 'library' }
   /** One exercise: its guidance, its totals and every session of it. */

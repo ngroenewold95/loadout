@@ -70,12 +70,20 @@ export function RecentWorkouts() {
     <section className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between">
         <h2 className="text-text-dim text-xs tracking-wide uppercase">Recent</h2>
-        <button
-          className="text-text-dim active:text-text px-2 py-1 text-sm"
-          onClick={() => push({ kind: 'history' })}
-        >
-          All workouts
-        </button>
+        <div className="flex items-baseline">
+          <button
+            className="text-text-dim active:text-text px-2 py-1 text-sm"
+            onClick={() => push({ kind: 'calendar' })}
+          >
+            Calendar
+          </button>
+          <button
+            className="text-text-dim active:text-text px-2 py-1 text-sm"
+            onClick={() => push({ kind: 'history' })}
+          >
+            All workouts
+          </button>
+        </div>
       </div>
       {sessions.map((session) => (
         <WorkoutRow key={session.id} session={session} />

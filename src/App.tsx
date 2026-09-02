@@ -9,6 +9,7 @@ import { Home } from './ui/Home'
 import { SessionSummary } from './ui/SessionSummary'
 import { SessionExercisePicker, TemplateExercisePicker } from './ui/ExercisePicker'
 import { AllWorkouts } from './ui/WorkoutHistory'
+import { TrainingCalendar } from './ui/TrainingCalendar'
 import { ExerciseLibrary } from './ui/ExerciseLibrary'
 import { Settings } from './ui/Settings'
 import { ExerciseDetail } from './ui/ExerciseDetail'
@@ -38,6 +39,7 @@ const SCREEN_TITLES: Record<Screen['kind'], string> = {
   template: 'Workout',
   exercise: 'Exercise',
   history: 'Workouts',
+  calendar: 'Calendar',
   library: 'Exercises',
   templateEdit: 'Edit workout',
   settings: 'Settings',
@@ -135,6 +137,8 @@ function Shell() {
           <TemplateEditor templateId={screen.templateId} />
         ) : screen?.kind === 'history' ? (
           <AllWorkouts />
+        ) : screen?.kind === 'calendar' ? (
+          <TrainingCalendar />
         ) : screen?.kind === 'settings' ? (
           <Settings />
         ) : screen?.kind === 'library' ? (
