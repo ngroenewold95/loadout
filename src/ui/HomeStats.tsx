@@ -11,20 +11,31 @@
  * rows), incoherent for duration and distance work, and inverted for
  * `assistance`. That is a data model to be built and argued about, not a tile.
  */
-import { useHistoryStats, useReadyToAddLoad, useSetsByMuscle } from '../state/queries.ts'
+import {
+  useHistoryStats,
+  useReadyToAddLoad,
+  useSessionVolumes,
+  useSetsByMuscle,
+  useSetsByMuscleDay,
+} from '../state/queries.ts'
 import { localDateOf } from '../db/repo.ts'
 import { relativeDay } from '../logic/dates.ts'
 import { muscleMark } from '../logic/muscles.ts'
 import { compactWeight, DEFAULT_UNIT } from '../logic/units.ts'
+import { muscleWeeks, OTHER, periodOverPeriod, weeklyVolume } from '../logic/volume.ts'
 import { GroupWord } from './GroupTag.tsx'
 
 const UNIT = DEFAULT_UNIT
+
+/** Weeks in the muscle trend. A quarter, matching the volume sparkline. */
+const MUSCLE_WEEKS = 12
 
 export function HomeStats() {
   return (
     <div className="flex flex-col gap-3">
       <ReadyToAddLoad />
       <Cadence />
+      <VolumeTrend />
       <MuscleBalance />
       <Lifetime />
     </div>
@@ -92,6 +103,68 @@ function Cadence() {
   )
 }
 
+/** Weeks drawn. A quarter is long enough to show a direction and still fit. */
+const WEEKS = 12
+
+/**
+ * Which way training is going, as one row of bars.
+ *
+ * **Drawn as plain elements, not with `recharts`.** The chart on the exercise
+ * detail screen has axes, a tooltip and a unit to label; this has twelve
+ * numbers and no room for any of that, and a stacked bar built the same way is
+ * already the muscle balance below. Nothing here needs a chart library.
+ *
+ * The comparison beside it is the same 28-day window the readiness list and the
+ * muscle balance use, so Home is not holding three different ideas of "lately".
+ */
+function VolumeTrend() {
+  // One read covers both: the sparkline needs 12 weeks, the comparison needs
+  // eight, so the longer window answers both and they cannot disagree.
+  const { data: rows } = useSessionVolumes(WEEKS * 7)
+  const today = localDateOf()
+  if (!rows || rows.length === 0) return null
+
+  const weeks = weeklyVolume(rows, today, WEEKS)
+  const peak = Math.max(...weeks.map((w) => w.volumeKg))
+  if (peak === 0) return null
+
+  const change = periodOverPeriod(rows, today)
+
+  return (
+    <section>
+      <h2 className="text-text-dim flex items-baseline justify-between gap-2 text-xs tracking-wide uppercase">
+        <span>Volume · {WEEKS} weeks</span>
+        {change.changePct != null && (
+          <span className="normal-case tabular-nums">
+            {change.changePct >= 0 ? '+' : ''}
+            {Math.round(change.changePct)}% vs previous 4 weeks
+          </span>
+        )}
+      </h2>
+
+      <div className="mt-2 flex h-12 items-end gap-1">
+        {weeks.map((week, i) => (
+          <div
+            key={week.weekStart}
+            // A week with no training draws a flat sliver rather than nothing,
+            // so the gap is visible as a gap instead of as missing data.
+            className={`min-h-px flex-1 rounded-sm ${
+              i === weeks.length - 1 ? 'bg-primary' : 'bg-muted'
+            }`}
+            style={{ height: `${(week.volumeKg / peak) * 100}%` }}
+          />
+        ))}
+      </div>
+
+      <p className="text-text-dim mt-1 text-xs tabular-nums">
+        {compactWeight(change.currentKg, UNIT)} {UNIT} in 4 weeks
+        {change.previousKg > 0 &&
+          `, after ${compactWeight(change.previousKg, UNIT)} ${UNIT}`}
+      </p>
+    </section>
+  )
+}
+
 /**
  * Where the last four weeks of work went.
  *
@@ -128,6 +201,8 @@ function MuscleBalance() {
           />
         ))}
       </div>
+      <MuscleTrend />
+
       <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
         {rows.map((row) => (
           <li key={row.muscle ?? 'other'} className="flex items-center gap-1.5 text-xs">
@@ -143,6 +218,51 @@ function MuscleBalance() {
         ))}
       </ul>
     </section>
+  )
+}
+
+/**
+ * The same question over time: has the balance held, week by week.
+ *
+ * One stacked column per week, each column scaled to its own total so a light
+ * week and a heavy one can be compared on shape rather than on height. The
+ * height a column does carry is its share of the busiest week, so a week off
+ * still reads as a week off.
+ *
+ * **Sets, not volume**, the same choice the bar above it makes and for the same
+ * reason: a leg day outweighs an arm day several times over on volume and says
+ * nothing about where the work went.
+ */
+function MuscleTrend() {
+  const { data: rows } = useSetsByMuscleDay(MUSCLE_WEEKS * 7)
+  if (!rows || rows.length === 0) return null
+
+  const weeks = muscleWeeks(rows, localDateOf(), MUSCLE_WEEKS)
+  const peak = Math.max(...weeks.map((w) => w.total))
+  if (peak === 0) return null
+
+  return (
+    <div className="mt-3 flex h-14 items-end gap-1" aria-hidden="true">
+      {weeks.map((week) => (
+        <div
+          key={week.weekStart}
+          className="flex min-h-px flex-1 flex-col-reverse overflow-hidden rounded-sm"
+          style={{ height: `${(week.total / peak) * 100}%` }}
+        >
+          {[...week.sets.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([muscle, sets]) => (
+              <span
+                key={muscle}
+                style={{
+                  height: `${(sets / week.total) * 100}%`,
+                  backgroundColor: muscleMark(muscle === OTHER ? null : muscle).color,
+                }}
+              />
+            ))}
+        </div>
+      ))}
+    </div>
   )
 }
 
