@@ -16,25 +16,43 @@ import { useState } from 'react'
 import {
   useDiscardSession,
   useEndSession,
+  usePreviousSessionTotals,
   useSession,
   useSessionSets,
+  useSetSessionNotes,
 } from '../state/queries.ts'
 import { useNav } from '../state/nav.ts'
 import { formatDuration } from '../logic/entry.ts'
 import { relativeDay } from '../logic/dates.ts'
-import { sessionTotals } from '../logic/session.ts'
+import { groupByExercise, sessionTotals } from '../logic/session.ts'
 import { localDateOf } from '../db/repo.ts'
 import { formatWeight, DEFAULT_UNIT } from '../logic/units.ts'
+import { copyText } from './copyText.ts'
 import { GroupRail } from './GroupTag.tsx'
+import { describeSet } from './setText.ts'
+import { shareText } from './shareText.ts'
 import { Stat } from './Stat.tsx'
 
 interface Props {
   sessionId: number
 }
 
+/**
+ * A difference, signed.
+ *
+ * The `+` has to be added by hand - `String(2)` is `2` while `String(-2)`
+ * already carries its sign - and a difference with no sign on it reads as a
+ * total, which is exactly the number beside it.
+ */
+function delta(value: number, format: (v: number) => string): string {
+  return value > 0 ? `+${format(value)}` : format(value)
+}
+
 export function SessionSummary({ sessionId }: Props) {
   const { data: session, isLoading } = useSession(sessionId)
   const { data: sets } = useSessionSets(sessionId)
+  const { data: previous } = usePreviousSessionTotals(sessionId)
+  const saveNotes = useSetSessionNotes(sessionId)
   const endSession = useEndSession()
   const discardSession = useDiscardSession()
   const back = useNav((s) => s.back)
@@ -49,6 +67,23 @@ export function SessionSummary({ sessionId }: Props) {
    * accident the way a dialog can be.
    */
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+
+  /**
+   * `Copy` says `Copied` for a moment and then goes back.
+   *
+   * Android's own clipboard toast is gone on API 33+, so without this the tap
+   * has no feedback at all and the only way to know it worked is to leave the
+   * app and paste.
+   */
+  const [copied, setCopied] = useState(false)
+
+  /**
+   * The note being typed, or null when the stored one is being shown.
+   *
+   * Held here rather than written on every keystroke: a note is a sentence, and
+   * a write per character would be a write per character across the bridge.
+   */
+  const [draftNotes, setDraftNotes] = useState<string | null>(null)
 
   if (isLoading || !session) {
     return <p className="text-text-dim px-5 py-8">Loading session…</p>
@@ -66,27 +101,16 @@ export function SessionSummary({ sessionId }: Props) {
     Math.round(((session.endedAtUtc ?? Date.now()) - session.startedAtUtc) / 1000),
   )
 
-  // Sets grouped by exercise, in the order they were performed. `order_index`
-  // follows what actually happened, so a superset interleaves truthfully and
-  // this still lists each exercise once.
-  const byExercise: {
-    exerciseId: number
-    name: string
-    primaryMuscle: string | null
-    sets: NonNullable<typeof sets>
-  }[] = []
-  for (const set of sets ?? []) {
-    let group = byExercise.find((g) => g.exerciseId === set.exerciseId)
-    if (!group) {
-      group = {
-        exerciseId: set.exerciseId,
-        name: set.exerciseName,
-        primaryMuscle: set.primaryMuscle,
-        sets: [],
-      }
-      byExercise.push(group)
+  // Sets under their exercise, in the order they were performed. Shared with
+  // the share text, so the screen and the clipboard cannot disagree about what
+  // the workout was.
+  const byExercise = groupByExercise(sets ?? [])
+
+  const handleCopy = async () => {
+    if (await copyText(shareText(session, sets ?? [], unit))) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
-    group.sets.push(set)
   }
 
   const handleFinish = async () => {
@@ -108,16 +132,47 @@ export function SessionSummary({ sessionId }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-2 pb-4">
-        <h2 className="text-2xl font-semibold">{session.name ?? 'Workout'}</h2>
-        <p className="text-text-dim text-sm">
-          {session.localDate} · {relativeDay(session.localDate, localDateOf())}
-        </p>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-2xl font-semibold">{session.name ?? 'Workout'}</h2>
+            <p className="text-text-dim text-sm">
+              {session.localDate} · {relativeDay(session.localDate, localDateOf())}
+            </p>
+          </div>
+          {/* Outside the docked bar on purpose: that bar is hidden once the
+              session is finished, and a past workout is exactly the one most
+              likely to be worth sending to someone. */}
+          <button
+            type="button"
+            className="bg-surface-1 text-text-dim active:text-text shrink-0 rounded-xl px-3 py-2 text-sm"
+            onClick={handleCopy}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid grid-cols-2 gap-2">
           <Stat label="Duration" value={formatDuration(durationS)} />
           <Stat label="Sets" value={String(totals.sets)} />
+          <Stat label="Reps" value={String(totals.reps)} />
           <Stat label="Volume" value={formatWeight(totals.volumeKg, unit)} unit={unit} />
         </div>
+
+        {/* What this workout was, against the last time it was performed. The
+            screen said what happened and never whether it was any good, which
+            is the question it is open to answer. */}
+        {previous && (
+          <p className="text-text-dim mt-2 text-xs tabular-nums">
+            vs {previous.localDate}
+            {' · '}
+            {delta(totals.volumeKg - (previous.volumeKg ?? 0), (v) => formatWeight(v, unit))}{' '}
+            {unit}
+            {' · '}
+            {delta(totals.sets - previous.sets, String)} sets
+            {' · '}
+            {delta(totals.reps - previous.reps, String)} reps
+          </p>
+        )}
 
         <div className="mt-4 flex flex-col gap-2">
           {byExercise.map((group) => (
@@ -129,12 +184,80 @@ export function SessionSummary({ sessionId }: Props) {
                   {group.sets.length} {group.sets.length === 1 ? 'set' : 'sets'}
                 </span>
               </div>
+
+              {/* The sets themselves, numbered the way the history cards number
+                  them. A summary that only counted them made a 22-set workout
+                  read as `3 sets` eleven times. */}
+              <div className="mt-1 flex flex-col gap-0.5 pl-5">
+                {group.sets.map((set, i) => (
+                  <p key={set.id} className="flex items-baseline gap-2 text-sm tabular-nums">
+                    <span className="text-text-dim w-4 shrink-0 text-right text-xs">
+                      {i + 1}
+                    </span>
+                    <span className="text-text-dim">{describeSet(set, unit)}</span>
+                    {/* A set note is usually the machine's own base weight or
+                        a plate breakdown, which is exactly the thing you want
+                        beside the number rather than one screen away. */}
+                    {set.notes && (
+                      <span className="text-text-dim truncate text-xs italic">
+                        {set.notes}
+                      </span>
+                    )}
+                  </p>
+                ))}
+              </div>
             </div>
           ))}
           {byExercise.length === 0 && (
             <p className="text-text-dim text-sm">No sets logged.</p>
           )}
         </div>
+
+        {/* `sessions.notes` has been in the schema since the first migration and
+            the import fills it; until now nothing in the app could write it. */}
+        <section className="mt-4">
+          <h3 className="text-text-dim text-xs tracking-wide uppercase">Note</h3>
+          {draftNotes == null ? (
+            <button
+              type="button"
+              className="bg-surface-1 active:bg-surface-3 mt-2 w-full rounded-xl px-4 py-3 text-left text-sm"
+              onClick={() => setDraftNotes(session.notes ?? '')}
+            >
+              {session.notes ?? (
+                <span className="text-text-dim">How did it go?</span>
+              )}
+            </button>
+          ) : (
+            <div className="mt-2 flex flex-col gap-2">
+              <textarea
+                autoFocus
+                rows={3}
+                value={draftNotes}
+                onChange={(e) => setDraftNotes(e.target.value)}
+                placeholder="How did it go?"
+                className="bg-field text-text placeholder:text-text-dim w-full rounded-xl px-4 py-3 text-base"
+              />
+              <div className="flex items-center justify-end gap-2 text-sm">
+                <button
+                  className="text-text-dim active:text-text px-3 py-1"
+                  onClick={() => setDraftNotes(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="bg-primary text-on-primary rounded-xl px-4 py-2 font-medium disabled:opacity-40"
+                  disabled={saveNotes.isPending}
+                  onClick={async () => {
+                    await saveNotes.mutateAsync(draftNotes)
+                    setDraftNotes(null)
+                  }}
+                >
+                  Save note
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
       </div>
 
       {/* Docked, like the entry bar, so the primary button is where a thumb

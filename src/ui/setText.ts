@@ -12,10 +12,30 @@ import type { PerformedSet } from '../db/repo.ts'
 import { formatDuration } from '../logic/entry.ts'
 import { formatWeight, type Unit } from '../logic/units.ts'
 
-export function describeSet(set: PerformedSet, unit: Unit): string {
+/**
+ * How much of the set spells itself out.
+ *
+ * `compact` is what a row under a bar reads: the unit is stated once by the
+ * column it sits in, so `355 × 8` is unambiguous and short. `spoken` is for
+ * text that leaves the app - the share text - where nothing around it says
+ * what the numbers are, so it reads `355 lb × 8 reps`.
+ */
+export type SetStyle = 'compact' | 'spoken'
+
+export function describeSet(
+  set: PerformedSet,
+  unit: Unit,
+  style: SetStyle = 'compact',
+): string {
   const parts: string[] = []
-  if (set.weightKg != null) parts.push(`${formatWeight(set.weightKg, unit)}`)
-  if (set.reps != null) parts.push(parts.length > 0 ? `× ${set.reps}` : `${set.reps} reps`)
+  if (set.weightKg != null) {
+    const weight = formatWeight(set.weightKg, unit)
+    parts.push(style === 'spoken' ? `${weight} ${unit}` : weight)
+  }
+  if (set.reps != null) {
+    const reps = style === 'spoken' ? `${set.reps} reps` : String(set.reps)
+    parts.push(parts.length > 0 ? `× ${reps}` : style === 'spoken' ? reps : `${set.reps} reps`)
+  }
   if (set.durationS != null) parts.push(formatDuration(set.durationS))
   if (set.distanceM != null) parts.push(`${set.distanceM} m`)
   return parts.join(' ')
