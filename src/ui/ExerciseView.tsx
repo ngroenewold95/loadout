@@ -154,6 +154,18 @@ export function ExerciseView({ session, openAt }: Props) {
    */
   const [showGuidance, setShowGuidance] = useState(false)
 
+  /**
+   * The note being typed for the set the bar is pointed at, or null when the
+   * sheet is closed.
+   *
+   * `sets.notes` is where the imported history keeps a machine's own base
+   * weight and the odd plate breakdown, and nothing in the app could write one
+   * until now. It sits behind the edit affordance rather than in the bar
+   * itself: the bar is two numbers and a button, and the whole design rule is
+   * that nothing moves under a thumb mid-set.
+   */
+  const [noteDraft, setNoteDraft] = useState<string | null>(null)
+
   const pagerRef = useRef<HTMLDivElement>(null)
   // The rest lives in the store, not here: the pill that renders it sits in the
   // app bar, which is above this screen and outlives it.
@@ -685,6 +697,16 @@ export function ExerciseView({ session, openAt }: Props) {
                 Cancel
               </button>
               <button
+                className="text-text-dim active:text-text px-2 py-1"
+                onClick={() =>
+                  setNoteDraft(
+                    (sets ?? []).find((s) => s.id === editingSetId)?.notes ?? '',
+                  )
+                }
+              >
+                Note
+              </button>
+              <button
                 className="text-danger px-2 py-1 disabled:opacity-40"
                 disabled={busy}
                 onClick={handleDelete}
@@ -708,6 +730,37 @@ export function ExerciseView({ session, openAt }: Props) {
           stays exactly where the thumb left it. `ActionSheet` hands the back
           gesture a closer, so the first back after opening this closes the
           sheet rather than leaving the exercise. */}
+      {/* The note editor, over everything, for the same reason as the guidance
+          sheet: the entry bar must not grow a text field under a thumb. */}
+      {noteDraft != null && editingSetId != null && (
+        <ActionSheet title="Note on this set" onClose={() => setNoteDraft(null)}>
+          <div className="flex flex-col gap-3 px-5 pb-4">
+            <textarea
+              autoFocus
+              rows={3}
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              placeholder="Machine weight, plate breakdown, how it felt"
+              className="bg-field text-text placeholder:text-text-dim w-full rounded-xl px-4 py-3 text-base"
+            />
+            <button
+              className="bg-primary text-on-primary rounded-2xl py-3 font-semibold disabled:opacity-40"
+              disabled={busy}
+              onClick={async () => {
+                await updateSet.mutateAsync({
+                  setId: editingSetId,
+                  sessionId: session.id,
+                  patch: { notes: noteDraft.trim() ? noteDraft.trim() : null },
+                })
+                setNoteDraft(null)
+              }}
+            >
+              Save note
+            </button>
+          </div>
+        </ActionSheet>
+      )}
+
       {showGuidance && (
         <ActionSheet title={current.name} onClose={() => setShowGuidance(false)}>
           <div className="px-5 pb-2">
