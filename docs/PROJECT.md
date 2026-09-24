@@ -4,10 +4,12 @@ Living document, and the handoff point for a cold start. Anything stated as
 fact was **measured**; anything unverified says so explicitly. Update it when
 something is *learned*, not when something is planned.
 
-Last updated: 2026-09-01 (stages 23 to 34 - the demo batch - built with the
-phone disconnected and then **verified on device in one session**, which found
-two calendar faults and fixed them. Stage 22, the fabricated demo database, was
-dropped: the demo runs on the real data.)
+Last updated: 2026-09-23 (README rewritten for a public audience. Before that,
+2026-09-01: stages 23 to 34 - the demo batch - built with the phone disconnected
+and then **verified on device in one session**, which found two calendar faults
+and fixed them. Stage 22, the fabricated demo database, was dropped: the demo
+runs on the real data. Warm-up sets and stall detection landed the same day and
+are **still unverified on device**.)
 
 ---
 
@@ -123,7 +125,20 @@ caller, `app_settings` and `plate_inventory` are seeded, and `exercises.loading`
     auto-advance no longer returns to it forever
   - a launcher icon and splash of our own, rendered by `scripts/make-icons.mjs`
   See "Stages 24 to 34" below for what was measured.
-- 323 tests passing, typecheck and lint clean
+- **Warm-up sets and stall detection, built 2026-09-01 but NOT yet verified on
+  device.** Both are proved by tests only, and are the first thing to check in
+  the next device session:
+  - `set_type` finally has a writer, a toggle in the entry bar's edit row. A
+    warm-up leaves the target, the totals, the trend and the prefill alone, and
+    still appears on the summary and in the share text marked `W`. The filter
+    is `<> 'warmup'` everywhere and never `= 'working'`, because all 6,209
+    imported rows are `unknown`.
+  - `stallOf` reads the same series `bestOf` does, so assistance inverts for
+    free. N = 3 sessions, **chosen rather than measured**; too little history
+    answers `null`. It renders on the exercise detail screen and costs no new
+    query. `exerciseSessionsFor` batches the same rows for many exercises, for
+    putting this on Home next.
+- 343 tests passing, typecheck and lint clean
 
 Not built yet: deleting the spikes, which is now stage 21 and runs immediately
 before the cutover. **The cutover itself has not been performed** - the device
@@ -1330,7 +1345,7 @@ db/                 gitignored - rebuildable until cutover
 ```bash
 npm run dev          # Vite dev server; seeds FABRICATED history if empty
 npm run build        # tsc -b && vite build
-npm run test         # vitest (323 tests)
+npm run test         # vitest (343 tests)
 npm run lint         # oxlint
 npm run import       # rebuild db/ from the NEWEST Examples/*.csv; refuses after cutover
 npm run profile      # profile any CSV's structure
@@ -2671,7 +2686,7 @@ range.
 
 | Idea | Why it waits |
 |---|---|
-| **Stall detection** | An exercise that has not moved in N sessions is what a coach notices and the app cannot say. Needs a rule argued about, not a tile |
+| ~~**Stall detection**~~ | **Built 2026-09-01** as `stallOf`, N = 3 sessions. The rule was chosen, not argued from data, and that is the part to revisit |
 | **Warm-up sets** | `set_type` is `'unknown'` on all 6,209 rows. They then have to leave `sessionTotals`, `shouldIncreaseLoad` and the history cards, which is why it is not a toggle |
 | **Supersets made visible** | `order_index` interleaves them truthfully and 12 imported sessions contain them; nothing in the UI says so |
 | **A light theme** | The palette was sampled from a dark reference app. Real work across every screen, and invisible until a bright room |
@@ -2844,9 +2859,10 @@ this list is the wider pool it is drawn from.
 - **Progression rules per exercise.** One rule is encoded for everything: top of
   the range on every set. Double progression, linear, and rep-goal schemes are
   all different functions over the same rows.
-- **Stall detection.** An exercise that has not moved in N sessions is the thing
-  a coach would notice and the app currently cannot say. **The most wanted thing
-  left on this list.**
+- ~~**Stall detection.** An exercise that has not moved in N sessions is the
+  thing a coach would notice and the app currently cannot say.~~ **Built
+  2026-09-01**, on the exercise detail screen, with N = 3. Not yet on Home, and
+  not yet verified on device.
 - ~~**A calendar view**, which is the one view of five years the app does not
   have.~~ **Built in stage 32.**
 
